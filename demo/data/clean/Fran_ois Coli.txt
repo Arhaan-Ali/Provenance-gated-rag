@@ -1,0 +1,3 @@
+François Coli
+
+François Coli (June 5, 1881 – presumably on or after May 8, 1927) was a French pilot and navigator best known as the one-eyed flying partner of Charles Nungesser in their doomed attempt to fly the Atlantic Ocean on the aircraft known as "L'Oiseau Blanc".

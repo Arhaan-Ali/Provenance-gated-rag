@@ -1,0 +1,3 @@
+Edgar Kaiser Sr.
+
+Edgar Fosburgh Kaiser Sr. (July 29, 1908 – December 7, 1981) was an American industrialist, who was Chairman of Kaiser Aluminum and Chemical Corporation, the Kaiser Cement Corporation and the Kaiser Steel Corporation.

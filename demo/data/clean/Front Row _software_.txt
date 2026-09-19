@@ -1,0 +1,3 @@
+Front Row (software)
+
+Front Row is a discontinued media center software application for Apple's Macintosh computers and Apple TV for navigating and viewing video, photos, podcasts, and music from a computer, optical disc, or the Internet through a 10-foot user interface (similar to Windows Media Center and Kodi). The software relies on iTunes and iPhoto and is controlled by an Apple Remote or the keyboard function keys. The first version was released October 2005, with two major revisions since. Front Row was removed and discontinued in Mac OS X 10.7.

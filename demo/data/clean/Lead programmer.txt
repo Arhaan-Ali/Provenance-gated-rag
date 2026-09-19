@@ -1,0 +1,3 @@
+Lead programmer
+
+A lead programmer is a software engineer in charge of one or more software projects. Alternative titles include "development lead", "technical lead", "lead software engineer", "software design engineer lead" (SDE lead), "software development manager", "software manager", or "lead application developer". When primarily contributing in a high-level enterprise software design role, the title "software architect" (or similar) is often used.

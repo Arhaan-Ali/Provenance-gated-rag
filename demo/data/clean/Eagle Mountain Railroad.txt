@@ -1,0 +1,3 @@
+Eagle Mountain Railroad
+
+The Eagle Mountain Railroad (EMRR) was a private railroad in California, owned by the Kaiser Steel Corporation, and is owned today by Kaiser Steel's successor, Kaiser Ventures, Inc. of Ontario, California.

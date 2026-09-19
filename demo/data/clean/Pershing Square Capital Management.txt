@@ -1,0 +1,3 @@
+Pershing Square Capital Management
+
+Pershing Square Capital Management is an American hedge fund management company founded and run by Bill Ackman, located at 888 7th Avenue in New York.

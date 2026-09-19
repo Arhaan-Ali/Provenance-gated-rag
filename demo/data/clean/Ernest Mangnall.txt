@@ -1,0 +1,3 @@
+Ernest Mangnall
+
+James Ernest Mangnall (4 January 1866 – 13 January 1932) was an English football manager who started his career with Burnley and managed Manchester United between 1903–1912 and then went on to manage Manchester City from 1912–1924, and is the only man to date to have managed both clubs.

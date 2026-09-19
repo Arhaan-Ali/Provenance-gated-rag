@@ -1,0 +1,3 @@
+Joshua Parlby
+
+Joshua Parlby (born 1855 in Longton, Staffordshire) was an English football manager who managed Manchester City in the 1890s.

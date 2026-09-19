@@ -1,0 +1,3 @@
+Nutri Ventures – The Quest for the 7 Kingdoms
+
+Nutri Ventures (also known as Nutri Ventures – The Quest for the 7 Kingdoms) (Portuguese: Nutri Ventures - Em Busca dos 7 Reinos) is a Portuguese TV series produced by the Nutri Ventures Corporation that is distributed through Hulu Kids.

@@ -1,0 +1,3 @@
+Lothian and Borders
+
+Lothian and Borders is an area in south-east Scotland consisting of the East Lothian, City of Edinburgh, Midlothian, West Lothian areas (collectively known as Lothian) along with the Scottish Borders.

@@ -1,0 +1,3 @@
+Ephigenia of Ethiopia
+
+Saint Ephigenia of Ethiopia or Iphigenia of Ethiopia (Spanish: "Efigênia" ; Portuguese: "Ifigênia" ; French: "Iphigénie" ; ), also called Iphigenia of Abyssinia (1st century), is a folk saint whose life is told in the "Golden Legend" as a virgin converted to Christianity and then consecrated to God by St. Matthew the Apostle, who was spreading the Gospel to the region of "Ethiopia", which in this case is understood to be located in the regions south of the Caspian Sea, either in one of the provinces of Mesopotamia (Assyria and Babylon), or in Ancient Armenia (Colchis).

@@ -1,0 +1,3 @@
+Wes McKinney
+
+Wes McKinney is an American statistician, data scientist and businessman. He was the CEO and founder of technology startup Datapad. He is the main author of the open-source Pandas package for data analysis in the Python programming language, and has also written the textbook "Python for Data Analysis" on the topic. He worked as a software engineer for Cloudera following their acquisition of Datapad in 2014. He is now a software engineer at Two Sigma Investments.
