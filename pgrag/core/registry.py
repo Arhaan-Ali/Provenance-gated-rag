@@ -117,15 +117,10 @@ def discover_origins(corpus_dir: Path, rules: dict[str, tuple[TrustTier, str]]) 
     return origins
 
 
-_TIER_NAMES = "/".join(t.name for t in sorted(TrustTier, reverse=True)) #Because int enum gives list in declaration order we need to sort to get A-D
-
-_PROMPT = f"  [Enter] accept  [{_TIER_NAMES}] override tier  [x] exclude entirely\n> "
-
-
-
 def run_review_gate(origins: list[Origin]) -> list[ReviewDecision]:
     """Show each origin to a human and record their decision."""
-
+    tier_names = "/".join(t.name for t in sorted(TrustTier, reverse=True))
+    prompt = f"  [Enter] accept  [{tier_names}] override tier  [x] exclude entirely\n> "
 
     decisions = []
     for origin in origins:
@@ -135,7 +130,7 @@ def run_review_gate(origins: list[Origin]) -> list[ReviewDecision]:
         print(f"  Documents: {origin.document_count}")
 
         while True:
-            choice = input(_PROMPT).strip().upper() #remove _prompt and instead of the add the input text normally
+            choice = input(prompt).strip().upper()
             if choice in ("", "X") or choice in TrustTier.__members__:
                 break
             print(f"  Not understood: {choice!r}. Try again.")
