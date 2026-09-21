@@ -18,6 +18,12 @@ class TrustTier(IntEnum):
     B = 3
     A = 4
 
+    def __str__(self) -> str:
+        return self.name
+
+    def __format__(self, spec: str) -> str:
+        return format(self.name, spec)
+
     @property
     def description(self) -> str:
         return {
