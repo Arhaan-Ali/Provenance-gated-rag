@@ -70,11 +70,11 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama pyyaml
 
-ollama pull qwen3:8b
+ollama pull qwen3:30b-a3b
 ollama pull nomic-embed-text
 ```
 
-`demo/run.py` uses `qwen3:8b` for generation and `nomic-embed-text` (via
+`demo/run.py` uses `qwen3:30b-a3b` for generation and `nomic-embed-text` (via
 Ollama's own embedding endpoint) for embeddings -- both fully local, no
 API keys needed.
 
