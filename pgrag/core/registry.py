@@ -115,12 +115,11 @@ def discover_origins(corpus_dir: Path, rules: dict[str, tuple[TrustTier, str]]) 
             tier, reason = DEFAULT_TIER, "External or Unknown Origin, not listed in trust.yaml -> defaulting to lowest tier"
         origins.append(Origin(entry.name, tier, reason, document_count))
     return origins
-
+    
+tier_names = "/".join(t.name for t in sorted(TrustTier, reverse=True))
 
 def run_review_gate(origins: list[Origin]) -> list[ReviewDecision]:
     """Show each origin to a human and record their decision."""
-    tier_names = "/".join(t.name for t in sorted(TrustTier, reverse=True))
-    prompt = f"  [Enter] accept  [{tier_names}] override tier  [x] exclude entirely\n> "
 
     decisions = []
     for origin in origins:
@@ -130,7 +129,7 @@ def run_review_gate(origins: list[Origin]) -> list[ReviewDecision]:
         print(f"  Documents: {origin.document_count}")
 
         while True:
-            choice = input(prompt).strip().upper()
+            choice = input(f"  [Enter] accept  [{tier_names}] override tier  [x] exclude entirely\n> ").strip().upper()
             if choice in ("", "X") or choice in TrustTier.__members__:
                 break
             print(f"  Not understood: {choice!r}. Try again.")
