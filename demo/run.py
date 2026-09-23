@@ -1,7 +1,9 @@
-#Local Rag which uses Locally downloaded LLMs instead of open API keys with llamaIndex
+"""Local RAG with provenance gating: every document carries the trust tier of its origin."""
 
-import os
+import argparse
+import shutil
 import sys
+from pathlib import Path
 
 from llama_index.core import (
     Settings,
@@ -14,69 +16,169 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
 
-DATA_DIR = "data"
-PERSIST_DIR = "storage"
-RESULTS_DIR = "results"
+from pgrag.core.registry import (
+    discover_origins,
+    load_latest_decisions,
+    load_rules,
+    origin_of,
+    run_review_gate,
+    save_decisions,
+    tier_for_document,
+)
+
+DATA_DIR = Path("data")
+PERSIST_DIR = Path("storage")
+RESULTS_DIR = Path("results")
+TRUST_FILE = Path("trust.yaml")
+DECISIONS_DIR = Path("decisions")
 OLLAMA_URL = "http://localhost:11434"
 
-# Settings
+# Reserved metadata namespace. Only this file writes these keys, and they are
+# stripped from anything that arrives from a reader before we stamp our own.
+# They are also excluded from what the LLM and the embedder ever see, so a
+# poisoned document cannot forge a tier by writing one into its own text.
+TIER_KEY = "_prov_tier"
+ORIGIN_KEY = "_prov_origin"
+RESERVED_KEYS = (TIER_KEY, ORIGIN_KEY)
 
 Settings.llm = Ollama(
-    # this implementation uses qwen3: 30b-a3b any other Local LLM will also be supported
     model="qwen3:30b-a3b",
     base_url=OLLAMA_URL,
-
     request_timeout=600.0,
-
     context_window=32768,
-
-    thinking=False, #thinking is false so that qwen 30b's internal thinking is not shared as answer.
-
+    thinking=False,
     temperature=0.1,
 )
 
-# qwen3: 30b-a3b is not sufficient or advised for embeddings so using a nomic-embed-txt embedder from huggin-face
 Settings.embed_model = OllamaEmbedding(
     model_name="nomic-embed-text",
     base_url=OLLAMA_URL,
 )
 
-
 Settings.node_parser = SentenceSplitter(chunk_size=800, chunk_overlap=100)
 
 
 
-def get_index() -> VectorStoreIndex:
-    if os.path.isdir(PERSIST_DIR):
-        storage_context = StorageContext.from_defaults(persist_dir=PERSIST_DIR)
-        return load_index_from_storage(storage_context)
+def stamp_documents(documents, corpus_dir: Path, decisions):
+    """Attach the approved tier to each document; drop the ones that must not be indexed.
 
-    if not os.path.isdir(DATA_DIR):
-        sys.exit(f"Put your documents in ./{DATA_DIR}/ first.")
+    Returns (kept, dropped). A dropped document was excluded by the reviewer or
+    sits outside any origin folder - either way it never reaches the index.
+    """
+    kept, dropped = [], []
 
-    documents = SimpleDirectoryReader(DATA_DIR, recursive=True).load_data()
-    print(f"Loaded {len(documents)} documents. Embedding...")
-    index = VectorStoreIndex.from_documents(documents, show_progress=True)
-    index.storage_context.persist(persist_dir=PERSIST_DIR)
+    for doc in documents:
+        path = Path(doc.metadata.get("file_path", ""))
+
+        # Reserve the namespace: nothing upstream is allowed to supply these.
+        for key in RESERVED_KEYS:
+            doc.metadata.pop(key, None)
+
+        tier = tier_for_document(path, corpus_dir, decisions)
+        if tier is None:
+            dropped.append(path)
+            continue
+
+        doc.metadata[TIER_KEY] = tier.name
+        doc.metadata[ORIGIN_KEY] = origin_of(path, corpus_dir) or "?"
+
+        # Structural, not textual: the tier rides on the object and never gets
+        # rendered into the prompt, so it cannot be spoofed by document content.
+        for key in RESERVED_KEYS:
+            if key not in doc.excluded_llm_metadata_keys:
+                doc.excluded_llm_metadata_keys.append(key)
+            if key not in doc.excluded_embed_metadata_keys:
+                doc.excluded_embed_metadata_keys.append(key)
+
+        kept.append(doc)
+
+    return kept, dropped
+
+
+def build_index() -> VectorStoreIndex:
+    """Review every origin, then embed only what was approved."""
+    if not DATA_DIR.is_dir():
+        sys.exit(f"Put your documents in ./{DATA_DIR}/<origin-folder>/ first.")
+
+    rules = load_rules(TRUST_FILE)
+    origins = discover_origins(DATA_DIR, rules)
+    if not origins:
+        sys.exit(f"No origin folders found in ./{DATA_DIR}/. Each subfolder is one origin.")
+
+    decisions = run_review_gate(origins)
+    decisions_path = save_decisions(decisions, DECISIONS_DIR)
+    print(f"\nDecisions saved to {decisions_path}")
+
+    approved = load_latest_decisions(DECISIONS_DIR)
+    documents = SimpleDirectoryReader(str(DATA_DIR), recursive=True).load_data()
+    kept, dropped = stamp_documents(documents, DATA_DIR, approved)
+
+    if dropped:
+        print(f"Dropped {len(dropped)} document(s) from excluded origins.")
+    if not kept:
+        sys.exit("Nothing left to index - every origin was excluded.")
+
+    by_tier = {}
+    for doc in kept:
+        by_tier[doc.metadata[TIER_KEY]] = by_tier.get(doc.metadata[TIER_KEY], 0) + 1
+    print("Indexing " + ", ".join(f"{n} tier {t}" for t, n in sorted(by_tier.items())))
+
+    index = VectorStoreIndex.from_documents(kept, show_progress=True)
+    index.storage_context.persist(persist_dir=str(PERSIST_DIR))
+    (PERSIST_DIR / ".decisions_version").write_text(decisions_path.name, encoding="utf-8")
     return index
 
-#can save answer from save with just writing the name of the file
+
+def get_index(force_reindex: bool = False) -> VectorStoreIndex:
+    """Load the cached index, but only if it was built from the current decisions.
+
+    The old version returned the cache whenever the folder existed, which meant
+    adding a document or changing a tier silently had no effect. The marker file
+    ties the index to the decision set it came from.
+    """
+    if force_reindex and PERSIST_DIR.exists():
+        shutil.rmtree(PERSIST_DIR)
+
+    marker = PERSIST_DIR / ".decisions_version"
+    if PERSIST_DIR.is_dir() and marker.exists():
+        latest = sorted(DECISIONS_DIR.glob("decisions_v*.json"))
+        current = latest[-1].name if latest else None
+        if current and marker.read_text(encoding="utf-8").strip() == current:
+            print(f"Loading cached index (built from {current}).")
+            return load_index_from_storage(
+                StorageContext.from_defaults(persist_dir=str(PERSIST_DIR))
+            )
+        print("Decisions changed since the index was built - re-running the review gate.")
+        shutil.rmtree(PERSIST_DIR)
+
+    return build_index()
+
+
+# ---------------------------------------------------------------------------
+# Query
+# ---------------------------------------------------------------------------
+
+
 def save_last(last: dict, name: str) -> None:
-    os.makedirs(RESULTS_DIR, exist_ok=True)
-    path = os.path.join(RESULTS_DIR, f"{name}.txt")
-    with open(path, "w", encoding="utf-8") as f:
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    path = RESULTS_DIR / f"{name}.txt"
+    with path.open("w", encoding="utf-8") as f:
         f.write(f"MODEL:    {Settings.llm.model}\n")
         f.write(f"QUESTION: {last['q']}\n\n")
         f.write(f"{last['a']}\n\n")
         f.write("--- Sources ---\n")
-        for score, fname, text in last["s"]:
-            f.write(f"\n[{score:.3f}] {fname}\n{text[:500].strip()}\n")
+        for score, tier, origin, fname, text in last["s"]:
+            f.write(f"\n[{score:.3f}] [tier {tier}] {origin}/{fname}\n{text[:500].strip()}\n")
     print(f"Saved to {path}\n")
 
 
-
 def main() -> None:
-    index = get_index()
+    ap = argparse.ArgumentParser(description="Local RAG with provenance gating.")
+    ap.add_argument("--reindex", action="store_true",
+                    help="discard the cached index and re-run the review gate")
+    args = ap.parse_args()
+
+    index = get_index(force_reindex=args.reindex)
     query_engine = index.as_query_engine(
         similarity_top_k=5,
         response_mode="compact",
@@ -84,7 +186,6 @@ def main() -> None:
     )
 
     last = None
-
     print("\nAsk a question. Type  save <name>  to keep the last answer.")
     print("Blank line or Ctrl-C to quit.\n")
 
@@ -113,10 +214,13 @@ def main() -> None:
         srcs = []
         print("--- Sources ---")
         for node in response.source_nodes:
-            fname = node.metadata.get("file_name", "?")
+            meta = node.metadata
+            tier = meta.get(TIER_KEY, "?")
+            origin = meta.get(ORIGIN_KEY, "?")
+            fname = meta.get("file_name", "?")
             score = float(node.score or 0)
-            print(f"[{score:.3f}] {fname}: {node.text[:160].strip()}...")
-            srcs.append((score, fname, node.text))
+            print(f"[{score:.3f}] [tier {tier}] {origin}/{fname}: {node.text[:120].strip()}...")
+            srcs.append((score, tier, origin, fname, node.text))
         print()
 
         last = {"q": line, "a": str(response), "s": srcs}
