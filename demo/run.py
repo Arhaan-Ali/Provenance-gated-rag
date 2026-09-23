@@ -12,6 +12,9 @@ from llama_index.core import (
     VectorStoreIndex,
     load_index_from_storage,
 )
+
+from pgrag.adapters.llamaindex import stamp_documents
+
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
@@ -58,41 +61,6 @@ Settings.embed_model = OllamaEmbedding(
 Settings.node_parser = SentenceSplitter(chunk_size=800, chunk_overlap=100)
 
 
-
-def stamp_documents(documents, corpus_dir: Path, decisions):
-    """Attach the approved tier to each document; drop the ones that must not be indexed.
-
-    Returns (kept, dropped). A dropped document was excluded by the reviewer or
-    sits outside any origin folder - either way it never reaches the index.
-    """
-    kept, dropped = [], []
-
-    for doc in documents:
-        path = Path(doc.metadata.get("file_path", ""))
-
-        # Reserve the namespace: nothing upstream is allowed to supply these.
-        for key in RESERVED_KEYS:
-            doc.metadata.pop(key, None)
-
-        tier = tier_for_document(path, corpus_dir, decisions)
-        if tier is None:
-            dropped.append(path)
-            continue
-
-        doc.metadata[TIER_KEY] = tier.name
-        doc.metadata[ORIGIN_KEY] = origin_of(path, corpus_dir) or "?"
-
-        # Structural, not textual: the tier rides on the object and never gets
-        # rendered into the prompt, so it cannot be spoofed by document content.
-        for key in RESERVED_KEYS:
-            if key not in doc.excluded_llm_metadata_keys:
-                doc.excluded_llm_metadata_keys.append(key)
-            if key not in doc.excluded_embed_metadata_keys:
-                doc.excluded_embed_metadata_keys.append(key)
-
-        kept.append(doc)
-
-    return kept, dropped
 
 
 def build_index() -> VectorStoreIndex:
