@@ -1,3 +1,0 @@
-Alec Muffett
-
-Alec David Edward Muffett (born April 22, 1968) is an Anglo-American internet-security evangelist, architect, and software engineer. He is principally known for his work on Crack, the original Unix password cracker, and for the CrackLib password-integrity testing library; he is also active in the Open Source software community. He worked as a Software Engineer for Facebook.
