@@ -13,7 +13,6 @@ from llama_index.core import (
     load_index_from_storage,
 )
 
-from pgrag.adapters.llamaindex import stamp_documents
 
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.ollama import OllamaEmbedding
@@ -22,12 +21,14 @@ from llama_index.llms.ollama import Ollama
 from pgrag.core.registry import (
     discover_origins,
     load_latest_decisions,
+    latest_decisions_path,
     load_rules,
-    origin_of,
-    run_review_gate,
     save_decisions,
-    tier_for_document,
 )
+
+from pgrag.cli import run_review_gate
+
+from pgrag.adapters.llamaindex import stamp_documents, TIER_KEY, ORIGIN_KEY
 
 DATA_DIR = Path("data")
 PERSIST_DIR = Path("storage")
@@ -36,13 +37,7 @@ TRUST_FILE = Path("trust.yaml")
 DECISIONS_DIR = Path("decisions")
 OLLAMA_URL = "http://localhost:11434"
 
-# Reserved metadata namespace. Only this file writes these keys, and they are
-# stripped from anything that arrives from a reader before we stamp our own.
-# They are also excluded from what the LLM and the embedder ever see, so a
-# poisoned document cannot forge a tier by writing one into its own text.
-TIER_KEY = "_prov_tier"
-ORIGIN_KEY = "_prov_origin"
-RESERVED_KEYS = (TIER_KEY, ORIGIN_KEY)
+
 
 Settings.llm = Ollama(
     model="qwen3:30b-a3b",
@@ -50,7 +45,7 @@ Settings.llm = Ollama(
     request_timeout=600.0,
     context_window=32768,
     thinking=False,
-    temperature=0.1,
+    temperature=0,
 )
 
 Settings.embed_model = OllamaEmbedding(
@@ -109,8 +104,8 @@ def get_index(force_reindex: bool = False) -> VectorStoreIndex:
 
     marker = PERSIST_DIR / ".decisions_version"
     if PERSIST_DIR.is_dir() and marker.exists():
-        latest = sorted(DECISIONS_DIR.glob("decisions_v*.json"))
-        current = latest[-1].name if latest else None
+        latest = latest_decisions_path(DECISIONS_DIR)
+        current = latest.name if latest else None
         if current and marker.read_text(encoding="utf-8").strip() == current:
             print(f"Loading cached index (built from {current}).")
             return load_index_from_storage(

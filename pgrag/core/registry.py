@@ -161,13 +161,18 @@ def save_decisions(decisions: list[ReviewDecision], decisions_dir: Path) -> Path
     out_path.write_text(json.dumps(payload, indent=2), encoding= "utf-8")
     return out_path
 
+def latest_decisions_path(decisions_dir: Path) -> Path | None:
+    """Newest decisions_vN.json, compared by N as a number (not as text). None if none yet."""
+    existing = _versions(decisions_dir)
+    return existing[-1][1] if existing else None
+
 
 def load_latest_decisions(decisions_dir: Path) -> dict[str, ReviewDecision]:
     """Load the newest decision file, keyed by origin name. Empty if none yet."""
-    existing = _versions(decisions_dir)
-    if not existing:
+    existing = latest_decisions_path(decisions_dir)
+    if existing is None:
         return {}
-    payload = json.loads(existing[-1][1].read_text(encoding="utf-8"))
+    payload = json.loads(existing.read_text(encoding="utf-8"))
     return {
         d["origin_name"]: ReviewDecision(
             origin_name=d["origin_name"],
