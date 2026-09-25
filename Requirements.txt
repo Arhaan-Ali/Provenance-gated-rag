@@ -1,0 +1,8 @@
+# Pinned on purpose: tests/test_channel_integrity.py checks how LlamaIndex
+# carries metadata. A version bump can silently change that - bump one package
+# at a time and re-run pytest before committing.
+llama-index-core==0.14.25
+llama-index-llms-ollama==0.11.0
+llama-index-embeddings-ollama==0.10.0
+PyYAML==6.0.3
+pytest==9.1.1
