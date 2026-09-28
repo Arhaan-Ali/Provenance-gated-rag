@@ -10,7 +10,7 @@ from enum import IntEnum
 from pathlib import Path
 
 
-0.
+
 class TrustTier(IntEnum):
     """A-D Document tiers, A with the highest trust and D with the lowest trust """
 
