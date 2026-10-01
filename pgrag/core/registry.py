@@ -101,7 +101,6 @@ origins:
     tier: B
     reason: "Internal wiki content; editable by staff, not externally verified"
     editability: org-wide
-    reason: "Internal wiki content; editable by staff, not externally verified
 """
 
 
