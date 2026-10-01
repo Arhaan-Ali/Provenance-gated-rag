@@ -38,7 +38,7 @@ DEFAULT_TIER = TrustTier.D #all unknown origin document are automatically D tier
 
 EDITABILITY = ("immutable", "authenticated-few", "org-wide", "anonymous")
 WIDE_EDITABILITY = ("org-wide", "anonymous")  # "a large or unauthenticated population"
-EDITABILITY_CAP = dict[str | None, TrustTier] = {
+EDITABILITY_CAP: dict[str | None, TrustTier] = {
     "org-wide": TrustTier.C,
     "anonymous": TrustTier.D,
     None: TrustTier.D,
