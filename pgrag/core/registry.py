@@ -10,7 +10,6 @@ from enum import IntEnum
 from pathlib import Path
 
 
-0.
 class TrustTier(IntEnum):
     """A-D Document tiers, A with the highest trust and D with the lowest trust """
 
@@ -149,8 +148,8 @@ def load_rules(path: Path) -> dict[str, Rule]:
     return rules
 
 def apply_editability_cap(tier, editability):
-    """Cap the tier at C when many people (or nobody knows who) can edit the source.
-       Returns (tier after cap, note for the review screen or None)."""
+    """Capped at C tier for org-wide access documents and D tier for anonymous documents"""
+
     cap = EDITABILITY_CAP.get(editability)
     if cap is None or tier <= cap:
         return tier, None
@@ -212,6 +211,7 @@ _VERSION_RE = re.compile(r"^decisions_v(\d+)$") #used for exact matches and name
 
 def _versions(decisions_dir: Path) -> list[tuple[int, Path]]:
     """Every decisions_vN.json found, sorted by N. Odd filenames are ignored."""
+
     found = []
     for p in decisions_dir.glob("decisions_v*.json"):
         m = _VERSION_RE.match(p.stem)
@@ -222,6 +222,7 @@ def _versions(decisions_dir: Path) -> list[tuple[int, Path]]:
 
 def save_decisions(decisions: list[ReviewDecision], decisions_dir: Path) -> Path:
     """Persist the decision set as a new, immutable, versioned audit file."""
+
     decisions_dir.mkdir(parents=True, exist_ok=True)
     existing = _versions(decisions_dir)
     next_version = (existing[-1][0] if existing else 0) + 1
@@ -251,12 +252,14 @@ def save_decisions(decisions: list[ReviewDecision], decisions_dir: Path) -> Path
 
 def latest_decisions_path(decisions_dir: Path) -> Path | None:
     """Newest decisions_vN.json, compared by N as a number (not as text). None if none yet."""
+
     existing = _versions(decisions_dir)
     return existing[-1][1] if existing else None
 
 
 def load_latest_decisions(decisions_dir: Path) -> dict[str, ReviewDecision]:
     """Load the newest decision file, keyed by origin name. Empty if none yet."""
+
     existing = latest_decisions_path(decisions_dir)
     if existing is None:
         return {}
@@ -281,6 +284,7 @@ def _parse_date(text: str | None) -> datetime | None:
 def origin_of(doc_path: Path, corpus_dir: Path) -> str | None:
     """A document's origin is its top-level folder under corpus_dir.
        Returns None for a file sitting loose in corpus_dir with no origin folder."""
+
     try:
         rel = doc_path.resolve().relative_to(corpus_dir.resolve())
     except ValueError:
@@ -294,6 +298,7 @@ def tier_for_document(
         decisions: dict[str, ReviewDecision],
 ) -> TrustTier | None:
     """Approved tier for one document, or None if it must not be ingested."""
+
     name = origin_of(doc_path, corpus_dir)
     if name is None:
         return None
