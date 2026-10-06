@@ -10,31 +10,37 @@ tell.
 
 ## Status
 
-Two pieces exist right now, **not yet wired together**:
+The registry and the demo are wired together. `demo/run.py` reviews every
+origin before indexing, stamps the approved tier onto each document, and
+drops the ones that must not be indexed.
 
-- **`pgrag/core/registry.py`** -- a trust-tier system for document
-  origins: computes a tier per origin, lets a human review/override/
-  exclude before indexing, and persists the decisions as an audit trail.
-  Fully implemented.
-- **`demo/run.py`** -- a standalone, interactive RAG demo. Currently a
-  *plain* pipeline: it indexes whatever is in `data/` with no trust
-  tracking at all. It does not yet call anything in `pgrag/core/registry.py`.
-
-`pgrag/cli.py` is an empty stub. `tests/` has no tests yet.
+| Piece | State |
+|---|---|
+| `pgrag/core/registry.py` | Trust tiers, editability caps, review gate, review decay, versioned audit trail |
+| `pgrag/cli.py` | The review gate's human-facing screen |
+| `pgrag/adapters/llamaindex.py` | Stamps tiers onto documents, hides them from the prompt, re-stamps after transforms |
+| `pgrag/core/capability_gate.py` | Derives the allowed tool set from the weakest tier in context |
+| `demo/run.py` | Interactive RAG demo, running the full review-and-stamp pipeline |
+| `tests/` | 90 tests across the registry, review gate, adapter and capability gate |
 
 ## Project structure
 
 ```
 pgrag/
   core/
-    registry.py   -- trust tiers, review gate, decision audit trail
-  cli.py           -- empty stub, not implemented
+    registry.py        -- tiers, editability caps, review gate, decay, audit trail
+    capability_gate.py -- allowed tools, derived from the weakest tier present
+  adapters/
+    llamaindex.py      -- stamp_documents, restamp_nodes, to_nodes
+  cli.py               -- the review gate screen
 demo/
-  run.py           -- standalone interactive RAG demo (Ollama + llama-index)
-tests/             -- empty
+  run.py               -- interactive RAG demo (Ollama + llama-index)
+  tools.py             -- mock tools for the capability gate
+tests/                 -- 90 tests
+Requirements.txt       -- pinned exactly, see the note in the file
 ```
 
-## Trust tier registry (`pgrag/core/registry.py`)
+## Trust tiers
 
 Four tiers, `A` (highest trust) down to `D` (lowest, and the default for
 anything unlisted):
@@ -46,54 +52,150 @@ anything unlisted):
 | C | External verified -- from outside, but signature/TLS/domain checked |
 | D | External un-verified -- everything else |
 
-The rubric lives in a `trust.yaml` file (not committed -- `load_rules()`
-creates one with a commented starter template the first time it's run, if
-none exists yet). Any origin not listed in it defaults to `D`
-automatically, so a new/unknown source is never trusted by accident.
+The rubric lives in `trust.yaml`, which `load_rules()` creates from a
+commented starter template on first run. Any origin not listed defaults to
+`D`, so a new or unknown source is never trusted by accident.
 
-Key functions:
-- `discover_origins(corpus_dir, rules)` -- scans a corpus for per-origin
-  subfolders and computes each one's tier.
-- `run_review_gate(origins)` -- interactively shows each origin's
-  computed tier and reason, and lets a human accept, override to a
-  specific tier, or exclude it entirely.
-- `save_decisions(...)` / `load_latest_decisions(...)` -- an immutable,
-  versioned JSON audit trail of every review decision made.
-- `origin_of(doc_path, corpus_dir)` / `tier_for_document(...)` --
-  per-document lookups: which origin a specific file belongs to, and
-  what tier applies to it (or `None` if it must not be ingested at all).
+### Editability caps the tier
+
+A tier says how much you trust what a source says today. It says nothing
+about how easily that can change tomorrow without anyone re-reviewing it,
+so each origin also declares who can edit it:
+
+| `editability` | Cap applied |
+|---|---|
+| `immutable` | none |
+| `authenticated-few` | none |
+| `org-wide` | tier capped at `C` |
+| `anonymous` | tier capped at `D` |
+| not declared | treated as `anonymous`, capped at `D` |
+
+Silence is not evidence that few people can edit a source, which is why an
+undeclared origin is capped as hard as an anonymous one. The cap only ever
+demotes, and it records a note the review screen shows -- for example
+`B -> C: editable by org-wide`.
+
+### Decisions expire
+
+`needs_review(origin, previous, now)` returns why an origin must be shown
+to a human again, or `None` to reuse the settled decision. It re-triggers
+on a new origin, a decision with no timestamp, a decision older than
+`REVIEW_MAX_AGE_DAYS` (90), a changed `editability`, or a changed computed
+tier.
+
+A reviewer's override is deliberate, so a computed tier that disagrees with
+one is not treated as drift -- otherwise every run would ask again about a
+decision already made. An overridden decision does still age out, so an
+override is not permanent either.
+
+## Key functions
+
+**`pgrag/core/registry.py`**
+
+- `load_rules(path)` -- reads `trust.yaml`, writing a starter template on
+  first run; validates both tier and `editability`.
+- `discover_origins(corpus_dir, rules)` -- scans for per-origin subfolders
+  and computes each tier, applying the editability cap.
+- `apply_editability_cap(tier, editability)` -- returns the capped tier and
+  a note explaining the demotion, or `None` if nothing was capped.
+- `needs_review(origin, previous, now)` -- why to re-review, or `None`.
+- `save_decisions(...)` / `load_latest_decisions(...)` /
+  `latest_decisions_path(...)` -- an immutable, versioned JSON audit trail.
+  Versions are compared numerically, so `v10` sorts after `v9`.
+- `origin_of(...)` / `tier_for_document(...)` -- per-document lookups.
+  `None` means the document must not be ingested.
+
+**`pgrag/adapters/llamaindex.py`**
+
+- `stamp_documents(documents, corpus_dir, decisions)` -- returns
+  `(kept, dropped, provenance)`. Attaches the approved tier to each kept
+  document and drops anything excluded or outside an origin folder.
+- `restamp_nodes(nodes, provenance)` -- re-applies the tier from the
+  provenance map after all transforms have run, failing closed to `D` for
+  any node it cannot trace. Nothing between chunking and indexing can
+  quietly change a node's tier.
+- `to_nodes(documents, provenance, transformations)` -- runs the
+  transforms, then re-stamps as the last step.
+
+Two details in the adapter are easy to miss and both matter:
+
+- The reserved `_prov_tier` and `_prov_origin` keys are stripped from
+  incoming metadata before stamping, so a document cannot declare its own
+  tier in its own front matter.
+- Both keys go into `excluded_llm_metadata_keys` and
+  `excluded_embed_metadata_keys`, so the tier rides on the object and is
+  never rendered into the prompt. A tier written as text is something a
+  model can be argued out of.
+
+**`pgrag/core/capability_gate.py`**
+
+`compute_allowed_tools(tiers)` returns the tools allowed for a turn, from
+the weakest tier present in retrieved context. One low-tier chunk withholds
+every tool above it. Nothing here inspects content, so it still holds when
+injection detection fails, and an empty context counts as the lowest tier.
 
 ## Setup
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install llama-index-core llama-index-llms-ollama llama-index-embeddings-ollama pyyaml
+pip install -r Requirements.txt
 
 ollama pull qwen3:30b-a3b
 ollama pull nomic-embed-text
 ```
 
-`demo/run.py` uses `qwen3:30b-a3b` for generation and `nomic-embed-text` (via
-Ollama's own embedding endpoint) for embeddings -- both fully local, no
-API keys needed.
+Dependencies are pinned exactly. `Requirements.txt` explains why: a version
+bump can silently change how LlamaIndex carries metadata, which is the
+thing the adapter depends on. Bump one package at a time and re-run the
+tests.
+
+`demo/run.py` uses `qwen3:30b-a3b` for generation and `nomic-embed-text`
+through Ollama's own embedding endpoint -- both fully local, no API keys.
+Note that `qwen3:30b-a3b` is around 18 GB and needs headroom to match; a
+machine with 16 GB of RAM will swap or time out, and `qwen3:8b` is a
+workable substitute.
 
 ## Running the demo
 
 ```bash
-mkdir -p data
-# put some .txt/.md/etc documents in data/
+mkdir -p data/<origin-folder>
+# put .txt documents in data/<origin-folder>/ -- one folder per origin
 python demo/run.py
 ```
 
+Each top-level folder under `data/` is one origin. The review gate shows
+every origin's computed tier, reason, any editability cap, and document
+count, then asks you to accept, override or exclude it before anything is
+embedded.
+
 Ask a question at the prompt; type `save <name>` to write the last
-question, answer, and sources to `results/<name>.txt`. The vector index
-is persisted to `storage/` after the first run, so later runs load it
-back instead of re-embedding everything.
+question, answer and sources to `results/<name>.txt`. The vector index is
+persisted to `storage/` after the first run, so later runs load it back
+instead of re-embedding.
 
-## Not yet done
+## Tests
 
-- The registry (`pgrag/core/registry.py`) and the demo (`demo/run.py`)
-  are not connected -- the demo doesn't do any trust tiering yet.
-- No tests.
-- `pgrag/cli.py` is empty.
+```bash
+pytest
+```
+
+90 tests covering the registry, review gate, adapter and capability gate.
+They need no LLM and no embedding model.
+
+Mutation-checked rather than merely green: removing the spoof-stripping
+`pop` fails one test, removing the metadata exclusion fails four, changing
+`min(tiers)` to `max(tiers)` fails two, and sorting decision versions as
+text rather than numbers fails four.
+
+## Known gaps
+
+- **`restamp_nodes` is not wired into the demo.** The safeguard exists and
+  is correct, but `demo/run.py` calls `stamp_documents` directly and never
+  re-stamps after chunking, so nothing currently benefits from it.
+- **No content-based filtering.** Tiers are computed per origin, so a
+  planted file inside an origin a reviewer *accepted* is stamped at that
+  origin's tier. Reviewing a folder is not the same as having read every
+  file in it.
+- **Nothing fact-checks.** A low-tier document stating a plain false claim,
+  carrying no instruction and no tool call, passes everything here.
