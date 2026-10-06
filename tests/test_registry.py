@@ -3,6 +3,7 @@ import json
 import pytest
 
 from pgrag.core.registry import (
+    Rule,
     DEFAULT_TIER,
     Origin,
     ReviewDecision,
@@ -69,7 +70,7 @@ def test_load_rules_creates_template_on_first_run(tmp_path):
     rules = load_rules(rules_path)
 
     assert rules_path.exists()
-    assert rules["verified_internal_wiki"][0] == TrustTier.B
+    assert rules["verified_internal_wiki"].tier == TrustTier.B
 
 
 def test_load_rules_creates_missing_parent_directories(tmp_path):
@@ -88,7 +89,7 @@ def test_load_rules_reads_existing_yaml(tmp_path):
 
     rules = load_rules(rules_path)
 
-    assert rules["some_partner_feed"] == (TrustTier.C, "TLS-verified partner feed")
+    assert rules["some_partner_feed"] == Rule(TrustTier.C, "TLS-verified partner feed", None)
 
 
 @pytest.mark.parametrize("written_tier", ["b", " B ", "B\n"])
@@ -98,7 +99,7 @@ def test_load_rules_normalises_tier_case_and_whitespace(tmp_path, written_tier):
 
     rules = load_rules(rules_path)
 
-    assert rules["wiki"][0] == TrustTier.B
+    assert rules["wiki"].tier == TrustTier.B
 
 
 def test_load_rules_supplies_a_default_reason_when_omitted(tmp_path):
@@ -107,7 +108,7 @@ def test_load_rules_supplies_a_default_reason_when_omitted(tmp_path):
 
     rules = load_rules(rules_path)
 
-    assert rules["wiki"][1] == "Set in trust.yaml"
+    assert rules["wiki"].reason == "Set in trust.yaml"
 
 
 def test_load_rules_rejects_unknown_tier(tmp_path):
@@ -152,7 +153,7 @@ def test_load_rules_returns_empty_when_origins_key_is_absent(tmp_path):
 
 def test_discover_origins_known_origin_gets_rubric_tier(tmp_path):
     _make_origin_dir(tmp_path, "verified_internal_wiki", 3)
-    rules = {"verified_internal_wiki": (TrustTier.B, "reason")}
+    rules = {"verified_internal_wiki": Rule(TrustTier.B, "reason", "authenticated-few")}
 
     origins = discover_origins(tmp_path, rules)
 
@@ -227,17 +228,22 @@ def test_save_decisions_writes_correct_schema(tmp_path):
     decisions = [ReviewDecision("public_inbox", TrustTier.D, True, False, "excluded by reviewer")]
 
     payload = json.loads(save_decisions(decisions, tmp_path).read_text())
+    written = payload["decisions"][0]
 
     assert payload["version"] == 1
-    assert payload["decisions"] == [
-        {
-            "origin_name": "public_inbox",
-            "tier": "D",
-            "excluded": True,
-            "overridden": False,
-            "reason": "excluded by reviewer",
-        }
-    ]
+    assert len(payload["decisions"]) == 1
+    assert {k: written[k] for k in
+            ("origin_name", "tier", "excluded", "overridden", "reason", "editability")} == {
+        "origin_name": "public_inbox",
+        "tier": "D",
+        "excluded": True,
+        "overridden": False,
+        "reason": "excluded by reviewer",
+        "editability": None,
+    }
+    # Stamped at save time when the decision carries none, so it cannot be
+    # asserted literally -- only that it is present and UTC.
+    assert written["reviewed_at"].endswith("+00:00")
 
 
 def test_save_decisions_records_an_utc_timestamp(tmp_path):
@@ -292,7 +298,15 @@ def test_decisions_survive_a_save_load_round_trip(tmp_path):
     save_decisions(original, tmp_path)
     loaded = load_latest_decisions(tmp_path)
 
-    assert loaded == {d.origin_name: d for d in original}
+    assert set(loaded) == {d.origin_name for d in original}
+    for decision in original:
+        got = loaded[decision.origin_name]
+        assert (got.tier, got.excluded, got.overridden, got.reason) == (
+            decision.tier, decision.excluded, decision.overridden, decision.reason
+        )
+        # save_decisions stamps a review time when the decision carries none,
+        # so the round trip is not identity.
+        assert got.reviewed_at is not None
 
 
 # --- origin_of / tier_for_document ----------------------------------------
