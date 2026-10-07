@@ -26,6 +26,8 @@ from pgrag.core.registry import (
     save_decisions,
 )
 
+from pgrag.core.sanitizer import sanitize_documents
+
 from pgrag.cli import run_review_gate
 
 from pgrag.adapters.llamaindex import stamp_documents, TIER_KEY, ORIGIN_KEY
@@ -74,12 +76,22 @@ def build_index() -> VectorStoreIndex:
 
     approved = load_latest_decisions(DECISIONS_DIR)
     documents = SimpleDirectoryReader(str(DATA_DIR), recursive=True).load_data()
+
+    # Before stamping, and before chunking: a document that instructs a model
+    # never reaches the index at all. Has to happen here, on whole documents -
+    # see pgrag/core/sanitizer.py for why doing it per chunk is bypassable.
+    documents, instructing = sanitize_documents(documents)
+    if instructing:
+        print(f"Sanitizer dropped {len(instructing)} document(s) that instructed the model:")
+        for doc in instructing:
+            print(f"  - {doc.metadata.get('file_path', '?')}")
+
     kept, dropped, provenance = stamp_documents(documents, DATA_DIR, approved)
 
     if dropped:
         print(f"Dropped {len(dropped)} document(s) from excluded origins.")
     if not kept:
-        sys.exit("Nothing left to index - every origin was excluded.")
+        sys.exit("Nothing left to index - every document was excluded or sanitized away.")
 
     by_tier = {}
     for doc in kept:

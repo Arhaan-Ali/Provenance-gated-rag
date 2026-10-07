@@ -20,8 +20,9 @@ drops the ones that must not be indexed.
 | `pgrag/cli.py` | The review gate's human-facing screen |
 | `pgrag/adapters/llamaindex.py` | Stamps tiers onto documents, hides them from the prompt, re-stamps after transforms |
 | `pgrag/core/capability_gate.py` | Derives the allowed tool set from the weakest tier in context |
+| `pgrag/core/sanitizer.py` | Drops whole documents that instruct the model, before chunking |
 | `demo/run.py` | Interactive RAG demo, running the full review-and-stamp pipeline |
-| `tests/` | 90 tests across the registry, review gate, adapter and capability gate |
+| `tests/` | 234 tests across the registry, review gate, adapter, capability gate and sanitizer |
 
 ## Project structure
 
@@ -30,13 +31,15 @@ pgrag/
   core/
     registry.py        -- tiers, editability caps, review gate, decay, audit trail
     capability_gate.py -- allowed tools, derived from the weakest tier present
+    sanitizer.py       -- drops documents that tell the model how to answer
   adapters/
-    llamaindex.py      -- stamp_documents, restamp_nodes, to_nodes
+    llamaindex.py      -- stamp_documents, restamp_nodes, to_nodes,
+                          InstructionSanitizerPostprocessor
   cli.py               -- the review gate screen
 demo/
   run.py               -- interactive RAG demo (Ollama + llama-index)
   tools.py             -- mock tools for the capability gate
-tests/                 -- 90 tests
+tests/                 -- 234 tests
 Requirements.txt       -- pinned exactly, see the note in the file
 ```
 
@@ -134,6 +137,32 @@ the weakest tier present in retrieved context. One low-tier chunk withholds
 every tool above it. Nothing here inspects content, so it still holds when
 injection detection fails, and an empty context counts as the lowest tier.
 
+**`pgrag/core/sanitizer.py`**
+
+- `sanitize_text(text)` -- returns a `SanitizeResult`: the text unchanged,
+  or replaced by a redaction marker, plus the sentences that triggered.
+- `sanitize_documents(documents)` -- returns `(kept, dropped)`. The
+  load-bearing call, wired into `build_index()` before stamping.
+
+The registry decides whether an *origin* is trusted. This decides whether a
+particular *document* is arguing with the model, which is a different
+question: reviewing a folder is not the same as having read every file in
+it, so an origin a reviewer accepted can still carry a planted file.
+
+A single trigger anywhere in a document discards all of it. A document
+willing to instruct a model has no remaining claim to being trusted for its
+facts either.
+
+The whole-document decision is the one that matters, and it has to happen
+before chunking. A document longer than the chunk size gets split, and the
+attacker controls that length: put the directive in one chunk and the false
+claim in another, and redacting only the first leaves the second intact and
+retrievable. Worse, the triggering chunk need not be retrieved at all, so
+anything working at query time never sees the evidence that the document it
+came from was hostile. `InstructionSanitizerPostprocessor` in the adapter
+runs the same check between retrieval and the LLM, but only as defence in
+depth for an index built by some other route.
+
 ## Setup
 
 ```bash
@@ -180,22 +209,27 @@ instead of re-embedding.
 pytest
 ```
 
-90 tests covering the registry, review gate, adapter and capability gate.
-They need no LLM and no embedding model.
+234 tests covering the registry, review gate, adapter, capability gate and
+sanitizer. They need no LLM and no embedding model.
 
 Mutation-checked rather than merely green: removing the spoof-stripping
 `pop` fails one test, removing the metadata exclusion fails four, changing
 `min(tiers)` to `max(tiers)` fails two, and sorting decision versions as
-text rather than numbers fails four.
+text rather than numbers fails four. All nine sanitizer mutations are
+caught, including the one that matters most: making the sanitizer work per
+chunk instead of per document.
 
 ## Known gaps
 
 - **`restamp_nodes` is not wired into the demo.** The safeguard exists and
   is correct, but `demo/run.py` calls `stamp_documents` directly and never
   re-stamps after chunking, so nothing currently benefits from it.
-- **No content-based filtering.** Tiers are computed per origin, so a
-  planted file inside an origin a reviewer *accepted* is stamped at that
-  origin's tier. Reviewing a folder is not the same as having read every
-  file in it.
+- **Injection with no AI-facing wording is not detected.** The sanitizer
+  catches text that addresses a model or demands an answer "with full
+  confidence". A plausible internal memo that quietly redirects something
+  has nothing in it for a text matcher to see. That attack is the
+  capability gate's job -- it refuses the resulting action rather than
+  detecting the text -- and `tests/test_sanitizer.py` asserts the gap is
+  still open so nobody widens the patterns by accident.
 - **Nothing fact-checks.** A low-tier document stating a plain false claim,
   carrying no instruction and no tool call, passes everything here.
