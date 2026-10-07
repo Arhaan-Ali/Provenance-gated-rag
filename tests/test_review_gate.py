@@ -1,11 +1,16 @@
+"""The review gate (cli.run_review_gate): keystrokes, overrides, and re-asking (decay)."""
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from pgrag.cli import run_review_gate
-from pgrag.core.registry import Origin, TrustTier
+from pgrag.core.registry import REVIEW_MAX_AGE_DAYS, Origin, ReviewDecision, TrustTier
+
+NOW = datetime(2026, 10, 8, tzinfo=timezone.utc)
 
 
-def _origin(name="wiki", tier=TrustTier.B, count=3):
-    return Origin(name, tier, "reason", count)
+def _origin(name="wiki", tier=TrustTier.B, count=3, editability=None):
+    return Origin(name, tier, "reason", count, editability)
 
 
 def _answer(monkeypatch, *responses):
@@ -13,6 +18,20 @@ def _answer(monkeypatch, *responses):
     replies = iter(responses)
     monkeypatch.setattr("builtins.input", lambda _prompt="": next(replies))
 
+
+def _count_questions(monkeypatch, reply=""):
+    """Answer every question with `reply`, and return a list that grows per question."""
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda _prompt="": asked.append(1) or reply)
+    return asked
+
+
+def _previous(name="wiki", days_ago=10, tier=TrustTier.B, editability=None):
+    return ReviewDecision(name, tier, False, False, "reason",
+                          editability=editability, reviewed_at=NOW - timedelta(days=days_ago))
+
+
+# --- keystrokes -----------------------------------------------------------
 
 def test_enter_accepts_the_computed_tier(monkeypatch):
     _answer(monkeypatch, "")
@@ -112,3 +131,94 @@ def test_review_screen_shows_the_tier_letter_and_its_meaning(monkeypatch, capsys
     assert "B" in printed
     assert "Internal Documents" in printed
     assert "3" in printed
+
+
+# --- editability and the cap ----------------------------------------------
+
+def test_a_decision_carries_the_origins_editability_and_a_review_time(monkeypatch):
+    _answer(monkeypatch, "")
+
+    [d] = run_review_gate([_origin(editability="org-wide")], now=NOW)
+
+    assert d.editability == "org-wide"
+    assert d.reviewed_at == NOW
+
+
+def test_accepting_a_capped_origin_records_the_capped_tier(monkeypatch):
+    _answer(monkeypatch, "")
+    capped = Origin("wiki", TrustTier.C, "reason", 3, "org-wide", "A -> C: editable by org-wide")
+
+    [d] = run_review_gate([capped])
+
+    assert d.tier == TrustTier.C
+    assert d.overridden is False
+
+
+def test_a_reviewer_can_override_the_cap(monkeypatch):
+    _answer(monkeypatch, "a")
+    capped = Origin("wiki", TrustTier.C, "reason", 3, "org-wide", "A -> C: editable by org-wide")
+
+    [d] = run_review_gate([capped])
+
+    assert d.tier == TrustTier.A
+    assert d.overridden is True
+
+
+# --- decay v1: re-asking ----------------------------------------------------
+
+def test_a_stale_origin_is_asked_again_and_its_clock_restarts(monkeypatch):
+    asked = _count_questions(monkeypatch)
+
+    [d] = run_review_gate([_origin()], {"wiki": _previous(days_ago=REVIEW_MAX_AGE_DAYS + 1)}, now=NOW)
+
+    assert len(asked) == 1
+    assert d.reviewed_at == NOW
+
+
+def test_a_fresh_origin_is_not_asked_and_keeps_its_old_date(monkeypatch):
+    def must_not_ask(_prompt=""):
+        pytest.fail("the gate asked about an origin reviewed 10 days ago")
+
+    monkeypatch.setattr("builtins.input", must_not_ask)
+    previous = _previous(days_ago=10)
+
+    [d] = run_review_gate([_origin()], {"wiki": previous}, now=NOW)
+
+    assert d is previous                                  # reused as-is
+    assert d.reviewed_at == NOW - timedelta(days=10)      # so it can still go stale later
+
+
+def test_a_new_origin_is_asked(monkeypatch):
+    asked = _count_questions(monkeypatch)
+
+    run_review_gate([_origin()], {}, now=NOW)
+
+    assert len(asked) == 1
+
+
+def test_a_change_of_editability_in_trust_yaml_is_asked_again(monkeypatch):
+    asked = _count_questions(monkeypatch)
+
+    run_review_gate([_origin(editability="anonymous")], {"wiki": _previous(editability="authenticated-few")}, now=NOW)
+
+    assert len(asked) == 1
+
+
+def test_only_the_stale_origin_in_a_mixed_list_is_asked(monkeypatch):
+    asked = _count_questions(monkeypatch)
+    origins = [_origin("fresh"), _origin("stale")]
+    previous = {"fresh": _previous("fresh", days_ago=5), "stale": _previous("stale", days_ago=200)}
+
+    decisions = run_review_gate(origins, previous, now=NOW)
+
+    assert len(asked) == 1
+    assert [d.origin_name for d in decisions] == ["fresh", "stale"]
+    assert decisions[1].reviewed_at == NOW
+
+
+def test_the_screen_says_why_an_origin_is_being_asked_again(monkeypatch, capsys):
+    _answer(monkeypatch, "")
+
+    run_review_gate([_origin()], {"wiki": _previous(days_ago=120)}, now=NOW)
+
+    assert "120 days" in capsys.readouterr().out
