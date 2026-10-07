@@ -1,22 +1,29 @@
 import json
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from pgrag.core.registry import (
-    Rule,
     DEFAULT_TIER,
+    EDITABILITY,
+    REVIEW_MAX_AGE_DAYS,
     Origin,
     ReviewDecision,
+    Rule,
     TrustTier,
+    apply_editability_cap,
     discover_origins,
     latest_decisions_path,
     load_latest_decisions,
     load_rules,
+    needs_review,
     origin_of,
+    origins_needing_review,
     save_decisions,
     tier_for_document,
 )
 
+NOW = datetime(2026, 10, 8, tzinfo=timezone.utc)
 
 def _make_origin_dir(tmp_path, name, file_count):
     origin_dir = tmp_path / name
@@ -148,6 +155,42 @@ def test_load_rules_returns_empty_when_origins_key_is_absent(tmp_path):
 
     assert load_rules(rules_path) == {}
 
+# --- Load Editability Rules  ----------------------------------------------
+
+def test_load_rules_reads_editability(tmp_path):
+    rules_path = tmp_path / "trust.yaml"
+    rules_path.write_text("origins:\n  wiki:\n    tier: B\n    editability: org-wide\n")
+ 
+    assert load_rules(rules_path)["wiki"].editability == "org-wide"
+ 
+ 
+def test_load_rules_editability_is_none_when_not_written(tmp_path):
+    rules_path = tmp_path / "trust.yaml"
+    rules_path.write_text("origins:\n  wiki:\n    tier: B\n")
+ 
+    assert load_rules(rules_path)["wiki"].editability is None
+ 
+ 
+@pytest.mark.parametrize("written", ["Org-Wide", " org-wide ", "ORG-WIDE"])
+def test_load_rules_normalises_editability_case_and_whitespace(tmp_path, written):
+    rules_path = tmp_path / "trust.yaml"
+    rules_path.write_text(f'origins:\n  wiki:\n    tier: B\n    editability: "{written}"\n')
+ 
+    assert load_rules(rules_path)["wiki"].editability == "org-wide"
+ 
+ 
+def test_load_rules_rejects_unknown_editability(tmp_path):
+    rules_path = tmp_path / "trust.yaml"
+    rules_path.write_text("origins:\n  wiki:\n    tier: B\n    editability: everyone\n")
+ 
+    with pytest.raises(ValueError, match="unknown editability"):
+        load_rules(rules_path)
+ 
+ 
+def test_the_starter_template_declares_editability(tmp_path):
+    rules = load_rules(tmp_path / "trust.yaml")
+ 
+    assert rules["verified_internal_wiki"].editability == "org-wide"
 
 # --- discover_origins -----------------------------------------------------
 
@@ -203,6 +246,101 @@ def test_discover_origins_returns_origins_sorted_by_name(tmp_path):
 def test_discover_origins_empty_corpus_returns_empty_list(tmp_path):
     assert discover_origins(tmp_path, rules={}) == []
 
+#--- Editability Cap  -----------------------------------------------------
+@pytest.mark.parametrize(
+    ("declared", "editability", "expected"),
+    [
+        # wide editing caps the tier
+        (TrustTier.A, "org-wide", TrustTier.C),
+        (TrustTier.B, "org-wide", TrustTier.C),
+        (TrustTier.A, "anonymous", TrustTier.D),
+        (TrustTier.B, "anonymous", TrustTier.D),
+        (TrustTier.C, "anonymous", TrustTier.D),
+        # not declared = assume the worst (fail closed)
+        (TrustTier.A, None, TrustTier.D),
+        # control: a narrow editor set keeps the declared tier
+        (TrustTier.A, "immutable", TrustTier.A),
+        (TrustTier.A, "authenticated-few", TrustTier.A),
+        (TrustTier.B, "immutable", TrustTier.B),
+        # already at or below the cap: untouched, never raised
+        (TrustTier.C, "org-wide", TrustTier.C),
+        (TrustTier.D, "org-wide", TrustTier.D),
+        (TrustTier.D, "anonymous", TrustTier.D),
+        (TrustTier.D, None, TrustTier.D),
+    ],
+)
+def test_editability_cap_table(declared, editability, expected):
+    assert apply_editability_cap(declared, editability)[0] == expected
+ 
+ 
+@pytest.mark.parametrize("editability", [*EDITABILITY, None])
+@pytest.mark.parametrize("tier", list(TrustTier))
+def test_the_cap_never_raises_a_tier(tier, editability):
+    new_tier, _ = apply_editability_cap(tier, editability)
+ 
+    assert new_tier <= tier
+ 
+ 
+def test_cap_note_says_what_changed_and_why():
+    _, note = apply_editability_cap(TrustTier.A, "org-wide")
+ 
+    assert note == "A -> C: editable by org-wide"
+ 
+ 
+def test_cap_note_explains_an_undeclared_editability():
+    _, note = apply_editability_cap(TrustTier.A, None)
+ 
+    assert "not declared" in note
+ 
+ 
+def test_no_note_when_nothing_was_capped():
+    assert apply_editability_cap(TrustTier.A, "immutable")[1] is None
+    assert apply_editability_cap(TrustTier.D, "anonymous")[1] is None
+ 
+ 
+def test_an_org_wide_origin_declared_A_comes_out_C(tmp_path):
+    _make_origin_dir(tmp_path, "team_wiki", 2)
+    rules = {"team_wiki": Rule(TrustTier.A, "reason", "org-wide")}
+ 
+    [origin] = discover_origins(tmp_path, rules)
+ 
+    assert origin.tier == TrustTier.C
+    assert origin.editability == "org-wide"
+    assert "org-wide" in origin.cap_note
+ 
+ 
+def test_an_anonymous_origin_comes_out_D(tmp_path):
+    _make_origin_dir(tmp_path, "forum", 2)
+    rules = {"forum": Rule(TrustTier.C, "reason", "anonymous")}
+ 
+    assert discover_origins(tmp_path, rules)[0].tier == TrustTier.D
+ 
+ 
+def test_an_undeclared_editability_comes_out_D(tmp_path):
+    _make_origin_dir(tmp_path, "notes", 1)
+    rules = {"notes": Rule(TrustTier.A, "reason", None)}
+ 
+    [origin] = discover_origins(tmp_path, rules)
+ 
+    assert origin.tier == TrustTier.D
+    assert "not declared" in origin.cap_note
+ 
+ 
+def test_an_immutable_origin_keeps_its_declared_tier(tmp_path):
+    _make_origin_dir(tmp_path, "notes", 1)
+    rules = {"notes": Rule(TrustTier.A, "reason", "immutable")}
+ 
+    [origin] = discover_origins(tmp_path, rules)
+ 
+    assert origin.tier == TrustTier.A
+    assert origin.cap_note is None
+ 
+ 
+def test_a_human_override_beats_the_cap(tmp_path):
+    # The cap lowers the COMPUTED tier. A reviewer's override still wins (F2).
+    decisions = {"wiki": ReviewDecision("wiki", TrustTier.A, False, True, "overridden")}
+ 
+    assert tier_for_document(tmp_path / "wiki" / "doc.txt", tmp_path, decisions) == TrustTier.A
 
 # --- save_decisions / load_latest_decisions -------------------------------
 
@@ -308,6 +446,135 @@ def test_decisions_survive_a_save_load_round_trip(tmp_path):
         # so the round trip is not identity.
         assert got.reviewed_at is not None
 
+def test_save_decisions_records_the_origin_strategy(tmp_path):
+    payload = json.loads(save_decisions([], tmp_path).read_text())
+ 
+    assert payload["origin_strategy"] == "folder"
+ 
+ 
+def test_editability_survives_a_save_load_round_trip(tmp_path):
+    save_decisions([ReviewDecision("wiki", TrustTier.C, False, False, "r", editability="org-wide")], tmp_path)
+ 
+    assert load_latest_decisions(tmp_path)["wiki"].editability == "org-wide"
+ 
+ 
+def test_save_keeps_a_review_date_the_decision_already_carries(tmp_path):
+    # Decay depends on this: a reused decision must keep its OLD date, or the
+    # date refreshes on every run and no origin ever goes stale.
+    old = NOW - timedelta(days=40)
+    save_decisions([ReviewDecision("wiki", TrustTier.B, False, False, "r", reviewed_at=old)], tmp_path)
+ 
+    assert load_latest_decisions(tmp_path)["wiki"].reviewed_at == old
+ 
+ 
+def test_an_old_decisions_file_without_the_new_fields_still_loads(tmp_path):
+    (tmp_path / "decisions_v1.json").write_text(json.dumps({
+        "version": 1,
+        "decided_at": "2026-06-01T10:00:00+00:00",
+        "decisions": [{"origin_name": "wiki", "tier": "B", "excluded": False,
+                       "overridden": False, "reason": "r"}],
+    }))
+ 
+    loaded = load_latest_decisions(tmp_path)["wiki"]
+ 
+    assert loaded.editability is None
+    assert loaded.reviewed_at == datetime(2026, 6, 1, 10, 0, tzinfo=timezone.utc)   # falls back to the file date
+ 
+ 
+# --- decay v1: when must an origin be asked about again -------------------
+ 
+def _origin_obj(tier=TrustTier.B, editability="authenticated-few"):
+    return Origin("wiki", tier, "reason", 3, editability)
+ 
+ 
+def _previous(days_ago=10, tier=TrustTier.B, editability="authenticated-few", overridden=False):
+    return ReviewDecision("wiki", tier, False, overridden, "reason",
+                          editability=editability, reviewed_at=NOW - timedelta(days=days_ago))
+ 
+ 
+def test_a_new_origin_needs_review():
+    assert needs_review(_origin_obj(), None, NOW) == "new origin"
+ 
+ 
+def test_a_decision_with_no_review_date_needs_review():
+    previous = _previous()
+    previous.reviewed_at = None
+ 
+    assert needs_review(_origin_obj(), previous, NOW) == "no review date on record"
+ 
+ 
+@pytest.mark.parametrize(
+    ("days", "stale"),
+    [
+        (0, False),
+        (10, False),
+        (REVIEW_MAX_AGE_DAYS, False),       # exactly at the limit is still fresh
+        (REVIEW_MAX_AGE_DAYS + 1, True),
+        (365, True),
+    ],
+)
+def test_a_review_goes_stale_only_after_the_limit(days, stale):
+    why = needs_review(_origin_obj(), _previous(days_ago=days), NOW)
+ 
+    assert (why is not None) == stale
+ 
+ 
+def test_one_second_past_the_limit_is_stale():
+    previous = _previous(days_ago=REVIEW_MAX_AGE_DAYS)
+    previous.reviewed_at -= timedelta(seconds=1)
+ 
+    assert needs_review(_origin_obj(), previous, NOW) is not None
+ 
+ 
+def test_the_stale_reason_says_how_old_it_is():
+    why = needs_review(_origin_obj(), _previous(days_ago=120), NOW)
+ 
+    assert "120 days" in why
+ 
+ 
+def test_a_fresh_unchanged_origin_is_left_alone():
+    assert needs_review(_origin_obj(), _previous(days_ago=10), NOW) is None
+ 
+ 
+def test_changing_editability_in_trust_yaml_triggers_review():
+    why = needs_review(_origin_obj(editability="anonymous"), _previous(editability="authenticated-few"), NOW)
+ 
+    assert why == "editability changed in trust.yaml"
+ 
+ 
+def test_changing_the_tier_in_trust_yaml_triggers_review():
+    why = needs_review(_origin_obj(tier=TrustTier.A), _previous(tier=TrustTier.B), NOW)
+ 
+    assert why == "tier changed in trust.yaml"
+ 
+ 
+def test_a_reviewer_override_does_not_trigger_review_just_because_the_yaml_differs():
+    # The reviewer chose A on purpose; the yaml saying B is expected, not a change.
+    previous = _previous(tier=TrustTier.A, overridden=True)
+ 
+    assert needs_review(_origin_obj(tier=TrustTier.B), previous, NOW) is None
+ 
+ 
+def test_origins_needing_review_lists_only_the_ones_that_need_it():
+    origins = [
+        Origin("fresh", TrustTier.B, "r", 1, "authenticated-few"),
+        Origin("stale", TrustTier.B, "r", 1, "authenticated-few"),
+        Origin("brand_new", TrustTier.D, "r", 1, None),
+    ]
+    decisions = {
+        "fresh": ReviewDecision("fresh", TrustTier.B, False, False, "r", "authenticated-few", NOW - timedelta(days=5)),
+        "stale": ReviewDecision("stale", TrustTier.B, False, False, "r", "authenticated-few", NOW - timedelta(days=200)),
+    }
+ 
+    result = origins_needing_review(origins, decisions, NOW)
+ 
+    assert [name for name, _ in result] == ["stale", "brand_new"]
+ 
+ 
+def test_nothing_needs_review_when_everything_is_fresh():
+    origins = [Origin("wiki", TrustTier.B, "r", 1, "authenticated-few")]
+ 
+    assert origins_needing_review(origins, {"wiki": _previous(days_ago=1)}, NOW) == []
 
 # --- origin_of / tier_for_document ----------------------------------------
 
