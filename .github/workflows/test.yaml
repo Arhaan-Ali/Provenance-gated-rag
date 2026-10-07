@@ -24,6 +24,11 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          # Needed because the file is Requirements.txt, and the action's
+          # default glob only looks for a lower-case requirements.txt. The
+          # runner is case-sensitive, so without this the cache step fails
+          # before anything installs.
+          cache-dependency-path: Requirements.txt
 
       - name: Install pinned dependencies
         run: |
