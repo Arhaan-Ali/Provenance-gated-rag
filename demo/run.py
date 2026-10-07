@@ -74,7 +74,7 @@ def build_index() -> VectorStoreIndex:
 
     approved = load_latest_decisions(DECISIONS_DIR)
     documents = SimpleDirectoryReader(str(DATA_DIR), recursive=True).load_data()
-    kept, dropped = stamp_documents(documents, DATA_DIR, approved)
+    kept, dropped, provenance = stamp_documents(documents, DATA_DIR, approved)
 
     if dropped:
         print(f"Dropped {len(dropped)} document(s) from excluded origins.")
