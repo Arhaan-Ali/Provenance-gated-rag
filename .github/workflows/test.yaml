@@ -1,0 +1,48 @@
+# Runs the test suite on every push and pull request.
+#
+# The suite needs no LLM and no embedding model -- the registry, review gate,
+# adapter and capability gate are all pure logic -- so it runs in about a
+# second on a clean runner with nothing but pip install.
+#
+# This exists because two already-fixed bugs came back on 4 Oct and nobody
+# found out for three days. Both would have failed here within a minute.
+
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          # Needed because the file is Requirements.txt, and the action's
+          # default glob only looks for a lower-case requirements.txt. The
+          # runner is case-sensitive, so without this the cache step fails
+          # before anything installs.
+          cache-dependency-path: Requirements.txt
+
+      - name: Install pinned dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r Requirements.txt
+
+      - name: Check every module imports
+        # A chained assignment or a stale copy breaks the import without
+        # breaking the syntax, so py_compile and parse-only linters miss it.
+        # This catches it before pytest even collects.
+        run: |
+          python -c "import pgrag.core.registry"
+          python -c "import pgrag.cli"
+          python -c "import pgrag.adapters.llamaindex"
+
+      - name: Run the test suite
+        run: pytest -q
