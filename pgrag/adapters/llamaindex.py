@@ -4,19 +4,26 @@ from pathlib import Path
 
 
 
+from llama_index.core.postprocessor.types import BaseNodePostprocessor
+from llama_index.core.schema import NodeWithScore, QueryBundle
+
 from pgrag.core.registry import (
     DEFAULT_TIER,
     origin_of,
     tier_for_document,
 )
+from pgrag.core.sanitizer import sanitize_text
 
 TIER_KEY = "_prov_tier"
 ORIGIN_KEY = "_prov_origin"
 RESERVED_KEYS = (TIER_KEY, ORIGIN_KEY)
 
+# Set by the sanitizer postprocessor, not by the stamp, so it is not a
+# provenance key - but it still has to stay out of the prompt.
+SANITIZER_FLAG_KEY = "_prov_sanitizer_flagged"
 
-HIDDEN_FROM_LLM = RESERVED_KEYS + ("file_path",)
-HIDDEN_FROM_EMBED = RESERVED_KEYS
+HIDDEN_FROM_LLM = RESERVED_KEYS + (SANITIZER_FLAG_KEY, "file_path")
+HIDDEN_FROM_EMBED = RESERVED_KEYS + (SANITIZER_FLAG_KEY,)
 
 
 def _hide(node) -> None:
@@ -90,3 +97,36 @@ def to_nodes(documents, provenance: dict[str, dict[str, str]], transformations):
     for transform in transformations:
         nodes = transform(nodes)
     return restamp_nodes(nodes, provenance)  # must stay the LAST step
+
+
+class InstructionSanitizerPostprocessor(BaseNodePostprocessor):
+    """Redact retrieved chunks that instruct a model, between retrieval and the LLM.
+
+    Defence in depth only. sanitize_documents() in pgrag.core.sanitizer is
+    what actually protects the index, because this cannot see a document it
+    was never handed: pad an attack past the chunk size and the chunk
+    carrying the directive may not even be retrieved, while the one carrying
+    the false claim has nothing in it to match on.
+
+    Worth running anyway for an index built elsewhere, or one built before
+    the filter existed.
+    """
+
+    @classmethod
+    def class_name(cls) -> str:
+        return "InstructionSanitizerPostprocessor"
+
+    def _postprocess_nodes(
+        self,
+        nodes: list[NodeWithScore],
+        query_bundle: QueryBundle | None = None,
+    ) -> list[NodeWithScore]:
+        for node_with_score in nodes:
+            result = sanitize_text(node_with_score.node.text)
+            if result.flagged:
+                node_with_score.node.set_content(result.sanitized_text)
+                node_with_score.node.metadata[SANITIZER_FLAG_KEY] = True
+                # Same reasoning as the provenance keys: a flag the model can
+                # read is a flag the model can be talked out of.
+                _hide(node_with_score.node)
+        return nodes
