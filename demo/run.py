@@ -24,13 +24,16 @@ from pgrag.core.registry import (
     latest_decisions_path,
     load_rules,
     save_decisions,
+    origins_needing_review,
 )
+
+from datetime import datetime, timezone
 
 from pgrag.core.sanitizer import sanitize_documents
 
 from pgrag.cli import run_review_gate
 
-from pgrag.adapters.llamaindex import stamp_documents, TIER_KEY, ORIGIN_KEY
+from pgrag.adapters.llamaindex import stamp_documents, to_nodes, TIER_KEY, ORIGIN_KEY
 
 DATA_DIR = Path("data")
 PERSIST_DIR = Path("storage")
@@ -62,6 +65,8 @@ Settings.node_parser = SentenceSplitter(chunk_size=800, chunk_overlap=100)
 
 def build_index() -> VectorStoreIndex:
     """Review every origin, then embed only what was approved."""
+
+
     if not DATA_DIR.is_dir():
         sys.exit(f"Put your documents in ./{DATA_DIR}/<origin-folder>/ first.")
 
@@ -70,7 +75,8 @@ def build_index() -> VectorStoreIndex:
     if not origins:
         sys.exit(f"No origin folders found in ./{DATA_DIR}/. Each subfolder is one origin.")
 
-    decisions = run_review_gate(origins)
+    previous = load_latest_decisions(DECISIONS_DIR)
+    decisions = run_review_gate(origins, previous)
     decisions_path = save_decisions(decisions, DECISIONS_DIR)
     print(f"\nDecisions saved to {decisions_path}")
 
@@ -98,19 +104,15 @@ def build_index() -> VectorStoreIndex:
         by_tier[doc.metadata[TIER_KEY]] = by_tier.get(doc.metadata[TIER_KEY], 0) + 1
     print("Indexing " + ", ".join(f"{n} tier {t}" for t, n in sorted(by_tier.items())))
 
-    index = VectorStoreIndex.from_documents(kept, show_progress=True)
+    nodes = to_nodes(kept, provenance, [Settings.node_parser])
+    index = VectorStoreIndex(nodes, show_progress=True)
     index.storage_context.persist(persist_dir=str(PERSIST_DIR))
     (PERSIST_DIR / ".decisions_version").write_text(decisions_path.name, encoding="utf-8")
     return index
 
 
 def get_index(force_reindex: bool = False) -> VectorStoreIndex:
-    """Load the cached index, but only if it was built from the current decisions.
-
-    The old version returned the cache whenever the folder existed, which meant
-    adding a document or changing a tier silently had no effect. The marker file
-    ties the index to the decision set it came from.
-    """
+    """Load the cached index only if it matches the current decisions and no review is due."""
     if force_reindex and PERSIST_DIR.exists():
         shutil.rmtree(PERSIST_DIR)
 
@@ -119,12 +121,19 @@ def get_index(force_reindex: bool = False) -> VectorStoreIndex:
         latest = latest_decisions_path(DECISIONS_DIR)
         current = latest.name if latest else None
         if current and marker.read_text(encoding="utf-8").strip() == current:
-            print(f"Loading cached index (built from {current}).")
-            return load_index_from_storage(
-                StorageContext.from_defaults(persist_dir=str(PERSIST_DIR))
-            )
-        print("Decisions changed since the index was built - re-running the review gate.")
+            origins = discover_origins(DATA_DIR, load_rules(TRUST_FILE))
+            pending = origins_needing_review(
+                origins, load_latest_decisions(DECISIONS_DIR), datetime.now(timezone.utc))
+            if not pending:
+                print(f"Loading cached index (built from {current}).")
+                return load_index_from_storage(
+                    StorageContext.from_defaults(persist_dir=str(PERSIST_DIR)))
+            print(f"Review needed again for {len(pending)} origin(s) - re-running the gate.")
+        else:
+            print("Decisions changed since the index was built - re-running the review gate.")
         shutil.rmtree(PERSIST_DIR)
+
+    return build_index()
 
     return build_index()
 
