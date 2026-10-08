@@ -26,16 +26,16 @@ from pgrag.core.registry import (
     latest_decisions_path,
     load_rules,
     save_decisions,
-    origins_needing_review,
 )
 
-from datetime import datetime, timezone
 
 from pgrag.core.sanitizer import sanitize_documents
 
 from pgrag.cli import run_review_gate
 
 from pgrag.adapters.llamaindex import stamp_documents, to_nodes, TIER_KEY, ORIGIN_KEY
+
+from pgrag.core.freshness import stale_reason, write_manifest
 
 DATA_DIR = Path("data")
 PERSIST_DIR = Path("storage")
@@ -109,33 +109,25 @@ def build_index() -> VectorStoreIndex:
     nodes = to_nodes(kept, provenance, [Settings.node_parser])
     index = VectorStoreIndex(nodes, show_progress=True)
     index.storage_context.persist(persist_dir=str(PERSIST_DIR))
-    (PERSIST_DIR / ".decisions_version").write_text(decisions_path.name, encoding="utf-8")
+    write_manifest(PERSIST_DIR, decisions_path.name, DATA_DIR)
     return index
 
 
 def get_index(force_reindex: bool = False) -> VectorStoreIndex:
-    """Load the cached index only if it matches the current decisions and no review is due."""
+    """Reuse the saved index only if nothing it was built from has changed."""
     if force_reindex and PERSIST_DIR.exists():
         shutil.rmtree(PERSIST_DIR)
 
-    marker = PERSIST_DIR / ".decisions_version"
-    if PERSIST_DIR.is_dir() and marker.exists():
-        latest = latest_decisions_path(DECISIONS_DIR)
-        current = latest.name if latest else None
-        if current and marker.read_text(encoding="utf-8").strip() == current:
-            origins = discover_origins(DATA_DIR, load_rules(TRUST_FILE))
-            pending = origins_needing_review(
-                origins, load_latest_decisions(DECISIONS_DIR), datetime.now(timezone.utc))
-            if not pending:
-                print(f"Loading cached index (built from {current}).")
-                return load_index_from_storage(
-                    StorageContext.from_defaults(persist_dir=str(PERSIST_DIR)))
-            print(f"Review needed again for {len(pending)} origin(s) - re-running the gate.")
-        else:
-            print("Decisions changed since the index was built - re-running the review gate.")
+    if PERSIST_DIR.is_dir() and DATA_DIR.is_dir():
+        origins = discover_origins(DATA_DIR, load_rules(TRUST_FILE))
+        why = stale_reason(PERSIST_DIR, DECISIONS_DIR, DATA_DIR, origins,
+                           load_latest_decisions(DECISIONS_DIR))
+        if why is None:
+            print("Loading cached index.")
+            return load_index_from_storage(
+                StorageContext.from_defaults(persist_dir=str(PERSIST_DIR)))
+        print(f"Rebuilding: {why}.")
         shutil.rmtree(PERSIST_DIR)
-
-    return build_index()
 
     return build_index()
 
