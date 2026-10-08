@@ -18,6 +18,8 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
 
+from pgrag.cli import  run_review_gate, show_home
+
 from pgrag.core.registry import (
     discover_origins,
     load_latest_decisions,
@@ -161,6 +163,10 @@ def main() -> None:
     ap.add_argument("--reindex", action="store_true",
                     help="discard the cached index and re-run the review gate")
     args = ap.parse_args()
+
+    first_run = latest_decisions_path(DECISIONS_DIR) is None
+    if first_run:
+        show_home()
 
     index = get_index(force_reindex=args.reindex)
     query_engine = index.as_query_engine(
