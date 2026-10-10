@@ -6,8 +6,11 @@ from pgrag.core.registry import DEFAULT_TIER, TrustTier
 
 # Minimum tier every retrieved chunk must meet for the tool to be offered.
 TOOL_REQUIRED_TIER = {
-    "lookup_fact": TrustTier.D,
+    "search_corpus": TrustTier.D,
     "send_email": TrustTier.B,
+    "write_database": TrustTier.A,
+    "http_request": TrustTier.A,
+    "web_search": TrustTier.B,
 }
 
 
