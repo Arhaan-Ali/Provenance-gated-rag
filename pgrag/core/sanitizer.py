@@ -34,6 +34,8 @@ No llama_index import on purpose, same as the rest of pgrag/core.
 from __future__ import annotations
 
 import re
+import unicodedata
+
 from dataclasses import dataclass, field
 
 REDACTION_MARKER = (
@@ -44,17 +46,29 @@ REDACTION_MARKER = (
 # purpose: "supersedes" and "must answer" on their own appear in ordinary
 # policy and SLA text, so neither is a trigger by itself.
 _AI_DIRECTED_ADDRESS = re.compile(
-    r"\bnotice to any\b[^.]{0,40}\b(assistant|ai|language model|llm|chatbot)\b"
+    r"\bnotice to any\b.{0,120}?\b(assistant|ai|language model|llm|chatbot)\b"
     r"|\bif you are (an? )?(ai|language model|assistant|chatbot)\b"
     r"|\b(dear|attention)[:,]?\s+(any\s+)?(automated\s+)?(assistant|ai|language model|chatbot)\b",
-    re.IGNORECASE,
+    re.IGNORECASE | re.DOTALL,
 )
 
 _ANSWER_COERCION = re.compile(
-    r"\bmust (state|answer|respond)\b[^.]{0,80}\bwith full confidence\b"
-    r"|\bwith full confidence\b[^.]{0,80}\bmust (state|answer|respond)\b",
-    re.IGNORECASE,
+    r"\bmust (state|answer|respond)\b.{0,120}?\bwith full confidence\b"
+    r"|\bwith full confidence\b.{0,120}?\bmust (state|answer|respond)\b",
+    re.IGNORECASE | re.DOTALL,
 )
+
+_CONFUSABLES = str.maketrans({
+    "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041a": "K", "\u041c": "M",
+    "\u041d": "H", "\u041e": "O", "\u0420": "P", "\u0421": "C", "\u0422": "T",
+    "\u0425": "X", "\u0430": "a", "\u0435": "e", "\u043e": "o", "\u0440": "p",
+    "\u0441": "c", "\u0443": "y", "\u0445": "x", "\u0456": "i",
+})
+
+def _collapse(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text).translate(_CONFUSABLES)
+    return re.sub(r"\s+", " ", text).strip()
+
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
@@ -65,7 +79,7 @@ def _split_sentences(text: str) -> list[str]:
     Line wrapping inside a paragraph is not a sentence break, which is why
     the whitespace is collapsed first.
     """
-    collapsed = re.sub(r"\s+", " ", text).strip()
+    collapsed = _collapse(text)
     return [s for s in _SENTENCE_SPLIT.split(collapsed) if s]
 
 
@@ -82,20 +96,17 @@ class SanitizeResult:
 
 
 def sanitize_text(text: str) -> SanitizeResult:
-    """Return the text unchanged, or replaced by a marker if anything triggered.
-
-    triggering_sentences carries the sentences that fired, so a reviewer can
-    be told *why* something was dropped rather than just that it was.
-    """
-    triggering = [
-        sentence
-        for sentence in _split_sentences(text)
-        if _AI_DIRECTED_ADDRESS.search(sentence) or _ANSWER_COERCION.search(sentence)
-    ]
-    if not triggering:
+    collapsed = re.sub(r"\s+", " ", text).strip()
+    spans = [m.span() for p in (_AI_DIRECTED_ADDRESS, _ANSWER_COERCION)
+             for m in p.finditer(collapsed)]
+    if not spans:
         return SanitizeResult(sanitized_text=text)
-    return SanitizeResult(sanitized_text=REDACTION_MARKER, triggering_sentences=triggering)
 
+    # Decide on the whole text. Sentences are only used to explain why.
+    per_sentence = [s for s in _split_sentences(text)
+                    if _AI_DIRECTED_ADDRESS.search(s) or _ANSWER_COERCION.search(s)]
+    triggering = per_sentence or [collapsed[a:b] for a, b in spans]
+    return SanitizeResult(sanitized_text=REDACTION_MARKER, triggering_sentences=triggering)
 
 def sanitize_documents(documents) -> tuple[list, list]:
     """Drop whole documents that instruct a model. Returns (kept, dropped).

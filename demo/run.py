@@ -5,6 +5,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from llama_index.readers.file import PDFReader
+
 from llama_index.core import (
     Settings,
     SimpleDirectoryReader,
@@ -63,6 +65,10 @@ Settings.embed_model = OllamaEmbedding(
 Settings.node_parser = SentenceSplitter(chunk_size=800, chunk_overlap=100)
 
 
+reader = SimpleDirectoryReader(
+    str(DATA_DIR), recursive=True,
+    file_extractor={".pdf": PDFReader(return_full_document=True)},
+)
 
 
 def build_index() -> VectorStoreIndex:
