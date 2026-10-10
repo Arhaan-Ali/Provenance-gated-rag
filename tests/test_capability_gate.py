@@ -5,22 +5,27 @@ from pgrag.core.registry import TrustTier
 
 
 def test_high_trust_context_allows_all_tools():
-    allowed = compute_allowed_tools([TrustTier.A, TrustTier.B])
+    allowed = compute_allowed_tools([TrustTier.A])
 
-    assert "lookup_fact" in allowed
-    assert "send_email" in allowed
+    assert sorted(allowed) == sorted(TOOL_REQUIRED_TIER)
+
+def test_one_b_chunk_lowers_the_whole_turn():
+   allowed = compute_allowed_tools([TrustTier.A, TrustTier.B])
+   assert "send_email" in allowed          # B is enough for this
+   assert "write_database" not in allowed  # needs A
+   assert "http_request" not in allowed    # needs A
 
 
 def test_one_low_tier_chunk_blocks_send_email():
     allowed = compute_allowed_tools([TrustTier.A, TrustTier.D])
 
-    assert "lookup_fact" in allowed
+    assert "search_corpus" in allowed
     assert "send_email" not in allowed
 
 
 def test_empty_context_defaults_to_lowest_tier():
     # Failing closed: no context must not read as "nothing untrusted here".
-    assert compute_allowed_tools([]) == ["lookup_fact"]
+    assert compute_allowed_tools([]) == ["search_corpus"]
 
 
 def test_tier_exactly_at_threshold_is_allowed():
@@ -34,10 +39,10 @@ def test_tier_just_below_threshold_is_blocked():
 @pytest.mark.parametrize(
     ("tiers", "expected"),
     [
-        ([TrustTier.A], ["lookup_fact", "send_email"]),
-        ([TrustTier.B], ["lookup_fact", "send_email"]),
-        ([TrustTier.C], ["lookup_fact"]),
-        ([TrustTier.D], ["lookup_fact"]),
+        ([TrustTier.A], ["search_corpus", "send_email", "web_search", "write_database", "http_request"]),
+        ([TrustTier.B], ["search_corpus", "send_email", "web_search"]),
+        ([TrustTier.C], ["search_corpus"]),
+        ([TrustTier.D], ["search_corpus"]),
     ],
 )
 def test_every_single_tier_context(tiers, expected):
