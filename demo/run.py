@@ -67,6 +67,7 @@ Settings.node_parser = SentenceSplitter(chunk_size=800, chunk_overlap=100)
 
 reader = SimpleDirectoryReader(
     str(DATA_DIR), recursive=True,
+    required_exts=[".txt", ".md", ".pdf"],
     file_extractor={".pdf": PDFReader(return_full_document=True)},
 )
 
