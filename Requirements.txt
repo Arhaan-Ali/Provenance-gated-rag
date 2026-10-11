@@ -7,7 +7,3 @@ llama-index-embeddings-ollama==0.10.0
 PyYAML==6.0.3
 rich==15.0.0
 pytest==9.1.1
-pytest==9.1.1
-llama-index-readers-file==0.6.0
-pypdf==6.19.0
-pytest-timeout==2.4.0
