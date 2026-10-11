@@ -318,7 +318,7 @@ def _parse_date(text: str | None, where: str) -> datetime | None:
     if dt.tzinfo is None:
         raise DecisionsError(
             f"{where}: {text!r} has no timezone (expected e.g. 2026-10-08T00:00:00+00:00)")
-    return dtte
+    return dt
 
 def origin_of(doc_path: Path, corpus_dir: Path) -> str | None:
     """A document's origin is its top-level folder under corpus_dir.
