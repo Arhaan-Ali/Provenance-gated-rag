@@ -46,6 +46,20 @@ EDITABILITY_CAP: dict[str | None, TrustTier] = {
 # Decay v1: a review older than this many days gets asked again.
 REVIEW_MAX_AGE_DAYS = 90
 
+class DecisionsError(ValueError):
+    """The decisions file is malformed. Fix or delete it; nothing was indexed."""
+
+def _parse_date(text: str | None, where: str) -> datetime | None:
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        raise DecisionsError(f"{where}: {text!r} is not a valid ISO date") from None
+    if dt.tzinfo is None:
+        raise DecisionsError(
+            f"{where}: {text!r} has no timezone (expected e.g. 2026-10-08T00:00:00+00:00)")
+    return dt
 
 @dataclass
 class Rule:
@@ -262,33 +276,49 @@ def load_latest_decisions(decisions_dir: Path) -> dict[str, ReviewDecision]:
     existing = latest_decisions_path(decisions_dir)
     if existing is None:
         return {}
-    payload = json.loads(existing.read_text(encoding="utf-8"))
+    try:
+        payload = json.loads(existing.read_text(encoding="utf-8"))
+    except ValueError as e:
+        raise DecisionsError(f"{existing.name}: not valid JSON ({e})") from None
     file_date = payload.get("decided_at")
-    return {
-        d["origin_name"]: ReviewDecision(
-            origin_name=d["origin_name"],
-            tier=TrustTier[d["tier"]],
-            excluded=bool(d["excluded"]),
-            overridden=bool(d["overridden"]),
+
+    result: dict[str, ReviewDecision] = {}
+    for d in payload.get("decisions", []):
+        name = d["origin_name"]
+
+        for flag in ("excluded", "overridden"):
+            if not isinstance(d[flag], bool):
+                raise DecisionsError(
+                    f"{existing.name}: '{flag}' for {name!r} must be true or false, got {d[flag]!r}")
+
+        try:
+            tier = TrustTier[d["tier"]]
+        except KeyError:
+            raise DecisionsError(f"{existing.name}: unknown tier {d['tier']!r} for {name!r}") from None
+
+        result[name] = ReviewDecision(
+            origin_name=name,
+            tier=tier,
+            excluded=d["excluded"],
+            overridden=d["overridden"],
             reason=d.get("reason", ""),
             editability=d.get("editability"),
-            reviewed_at=_parse_date(d.get("reviewed_at") or file_date),
+            reviewed_at=_parse_date(d.get("reviewed_at") or file_date,
+                                    f"{existing.name}: reviewed_at for {name!r}"),
         )
-        for d in payload.get("decisions", [])
-    }
+    return result
 
-def _parse_date(text: str | None) -> datetime | None:
-    return datetime.fromisoformat(text) if text else None
-
-def origin_of(doc_path: Path, corpus_dir: Path) -> str | None:
-    """A document's origin is its top-level folder under corpus_dir.
-       Returns None for a file sitting loose in corpus_dir with no origin folder."""
-
-    try:
-        rel = doc_path.resolve().relative_to(corpus_dir.resolve())
-    except ValueError:
+def _parse_date(text: str | None, where: str) -> datetime | None:
+    if not text:
         return None
-    return rel.parts[0] if len(rel.parts) > 1 else None
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        raise DecisionsError(f"{where}: {text!r} is not a valid ISO date") from None
+    if dt.tzinfo is None:
+        raise DecisionsError(
+            f"{where}: {text!r} has no timezone (expected e.g. 2026-10-08T00:00:00+00:00)")
+    return dt
 
 
 def tier_for_document(

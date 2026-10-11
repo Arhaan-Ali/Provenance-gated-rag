@@ -23,6 +23,7 @@ from llama_index.llms.ollama import Ollama
 from pgrag.cli import  run_review_gate, show_home
 
 from pgrag.core.registry import (
+    DecisionsError,
     discover_origins,
     load_latest_decisions,
     latest_decisions_path,
@@ -33,7 +34,6 @@ from pgrag.core.registry import (
 
 from pgrag.core.sanitizer import sanitize_documents
 
-from pgrag.cli import run_review_gate
 
 from pgrag.adapters.llamaindex import stamp_documents, to_nodes, TIER_KEY, ORIGIN_KEY
 
@@ -65,11 +65,12 @@ Settings.embed_model = OllamaEmbedding(
 Settings.node_parser = SentenceSplitter(chunk_size=800, chunk_overlap=100)
 
 
-reader = SimpleDirectoryReader(
-    str(DATA_DIR), recursive=True,
-    required_exts=[".txt", ".md", ".pdf"],
-    file_extractor={".pdf": PDFReader(return_full_document=True)},
-)
+def make_reader() -> SimpleDirectoryReader:
+    return SimpleDirectoryReader(
+        str(DATA_DIR), recursive=True,
+        required_exts=[".txt", ".md", ".pdf"],
+        file_extractor={".pdf": PDFReader(return_full_document=True)},
+    )
 
 
 def build_index() -> VectorStoreIndex:
@@ -90,7 +91,7 @@ def build_index() -> VectorStoreIndex:
     print(f"\nDecisions saved to {decisions_path}")
 
     approved = load_latest_decisions(DECISIONS_DIR)
-    documents = SimpleDirectoryReader(str(DATA_DIR), recursive=True).load_data()
+    documents = make_reader().load_data()
 
     # Before stamping, and before chunking: a document that instructs a model
     # never reaches the index at all. Has to happen here, on whole documents -
@@ -104,7 +105,7 @@ def build_index() -> VectorStoreIndex:
     kept, dropped, provenance = stamp_documents(documents, DATA_DIR, approved)
 
     if dropped:
-        print(f"Dropped {len(dropped)} document(s) from excluded origins.")
+        print(f"Dropped {len(dropped)} document(s): excluded origin, or not inside an origin folder.")
     if not kept:
         sys.exit("Nothing left to index - every document was excluded or sanitized away.")
 
@@ -167,7 +168,10 @@ def main() -> None:
     if first_run:
         show_home()
 
-    index = get_index(force_reindex=args.reindex)
+    try:
+        index = get_index(force_reindex=args.reindex)
+    except DecisionsError as e:
+        sys.exit(f"Cannot continue: {e}")
     query_engine = index.as_query_engine(
         similarity_top_k=5,
         response_mode="compact",
