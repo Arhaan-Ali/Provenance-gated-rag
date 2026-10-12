@@ -32,7 +32,7 @@ from pgrag.core.registry import (
 )
 
 
-from pgrag.core.sanitizer import sanitize_documents
+from pgrag.core.sanitizer import REDACTION_MARKER, sanitize_documents
 
 
 from pgrag.adapters.llamaindex import stamp_documents, to_nodes, TIER_KEY, ORIGIN_KEY
@@ -98,7 +98,8 @@ def build_index() -> VectorStoreIndex:
     # see pgrag/core/sanitizer.py for why doing it per chunk is bypassable.
     documents, instructing = sanitize_documents(documents)
     if instructing:
-        print(f"Sanitizer dropped {len(instructing)} document(s) that instructed the model:")
+        print(f"Sanitizer neutralised {len(instructing)} document(s) that instructed "
+              "the model (text replaced, node kept so it still carries its tier):")
         for doc in instructing:
             print(f"  - {doc.metadata.get('file_path', '?')}")
 
@@ -106,8 +107,17 @@ def build_index() -> VectorStoreIndex:
 
     if dropped:
         print(f"Dropped {len(dropped)} document(s): excluded origin, or not inside an origin folder.")
-    if not kept:
-        sys.exit("Nothing left to index - every document was excluded or sanitized away.")
+    # "No usable content", not "no documents". A neutralised document still
+    # appears in `kept` -- it has to, or removing it would remove the tier
+    # that withholds tools -- so a corpus of nothing but instruction
+    # documents now survives as a pile of redaction markers. The reason for
+    # refusing has not changed: an index with no content reaches the model
+    # with nothing to ground on and it answers from memory instead.
+    if not [d for d in kept if d.text.strip() != REDACTION_MARKER]:
+        sys.exit(
+            "Nothing left to index - every document was excluded by the review gate "
+            "or neutralised as an instruction document."
+        )
 
     by_tier = {}
     for doc in kept:

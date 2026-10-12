@@ -182,15 +182,48 @@ def sanitize_text(text: str) -> SanitizeResult:
     return SanitizeResult(sanitized_text=REDACTION_MARKER, triggering_sentences=triggering)
 
 def sanitize_documents(documents) -> tuple[list, list]:
-    """Drop whole documents that instruct a model. Returns (kept, dropped).
+    """Neutralise whole documents that instruct a model.
 
-    Call this before chunking and before stamping -- see the module
-    docstring for why the whole-document decision is the load-bearing one.
+    Returns (kept, neutralised). Every input document appears in `kept` --
+    the neutralised ones with their text replaced by REDACTION_MARKER. The
+    second list is the same objects again, so a caller can report what was
+    neutralised without diffing.
+
+    Call this before chunking and before stamping -- see the module docstring
+    for why the whole-document decision is the load-bearing one.
+
+    NEUTRALISED, not DROPPED, and that part is a correction. Dropping made
+    this function loosen the capability gate. The gate's protection is
+    carried by the PRESENCE of low-tier chunks -- compute_allowed_tools takes
+    min() over the tiers of what was retrieved -- and deleting a document
+    deleted its tier along with its payload. The documents this function
+    catches are the loud ones the gate did not need to stop, so switching the
+    sanitizer on raised the floor. Measured, same corpus, only this stage
+    toggled:
+
+        sanitizer OFF  tiers=['B','D']  min=D  allowed=[search_corpus]
+        sanitizer ON   tiers=['B']      min=B  allowed=[search_corpus,
+                                                        send_email, web_search]
+
+    The attack that actually needed stopping -- a quiet payload in the B-tier
+    origin, no AI-facing wording, invisible to this function by design -- was
+    top-ranked in both runs. Enabling the defence was what made it
+    actionable.
+
+    Keeping the node preserves the tier, so a hostile document still drags
+    the floor down once its text is gone. The invariant: NO CONTENT-DEPENDENT
+    STAGE MAY RAISE THE CAPABILITY FLOOR. InstructionSanitizerPostprocessor
+    already behaved this way, so the two stages now agree -- which inverts
+    the module docstring's claim about which of them is "the real defence".
     """
-    kept, dropped = [], []
+    kept, neutralised = [], []
     for document in documents:
-        if sanitize_text(document.text).flagged:
-            dropped.append(document)
-        else:
-            kept.append(document)
-    return kept, dropped
+        result = sanitize_text(document.text)
+        if result.flagged:
+            # set_content, not a metadata flag: the text is what reaches the
+            # model, and a flag the model can read is one a document can
+            # argue with.
+            document.set_content(result.sanitized_text)
+            neutralised.append(document)
+        kept.append(document)
+    return kept, neutralised
