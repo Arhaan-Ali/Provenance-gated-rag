@@ -42,21 +42,85 @@ REDACTION_MARKER = (
     "[REDACTED: this chunk instructed a model how to answer and was dropped by the sanitizer]"
 )
 
-# Two patterns, both rare in genuine business writing. Kept narrow on
-# purpose: "supersedes" and "must answer" on their own appear in ordinary
-# policy and SLA text, so neither is a trigger by itself.
-_AI_DIRECTED_ADDRESS = re.compile(
-    r"\bnotice to any\b.{0,120}?\b(assistant|ai|language model|llm|chatbot)\b"
-    r"|\bif you are (an? )?(ai|language model|assistant|chatbot)\b"
-    r"|\b(dear|attention)[:,]?\s+(any\s+)?(automated\s+)?(assistant|ai|language model|chatbot)\b",
-    re.IGNORECASE | re.DOTALL,
+# Detection is CO-OCCURRENCE of two independent signals, not proximity.
+#
+# These used to join each pair with a bounded gap -- .{0,120}? here, after
+# [^.]{0,40}/{0,80} before it. Both are bypassed the same way: a proximity
+# window is a number, and the attacker writes the document, so they exceed
+# it. 159 characters of ordinary filler between "must state" and "with full
+# confidence" defeats the 120 version while using the exact trigger
+# vocabulary -- no homoglyph, no synonym. Widening to 200 moves the number.
+#
+# So there is no distance term. Each half below is ordinary business English
+# alone and flags nothing by itself; the pair appearing together is what is
+# rare. That matches the decision this module already makes, which is per
+# document: if it is arguing with a model anywhere, none of it is indexed.
+#
+# Scoped to a PARAGRAPH, which is structural rather than numeric:
+#   - Punctuation cannot break it. "!" or "I.E." splits a sentence, not a
+#     paragraph, so the punctuation bypasses stay closed.
+#   - Padding cannot stretch it. Separating the halves needs a blank line,
+#     which visibly breaks the instruction into two statements.
+#   - It does not fire on ordinary documents. Scoping to the whole document
+#     instead flags a support handbook whose escalation section says "must
+#     respond" and whose board section says "with full confidence" 4,000
+#     characters later -- a real document, dropped whole.
+#
+# Still bypassable by splitting the halves across a blank line. No scope is
+# both tight enough to avoid false positives and loose enough to catch every
+# arrangement, which is the argument for the capability gate not reading
+# content at all. tests/test_sanitizer.py asserts that gap stays open.
+
+# Signal pair 1: a document that addresses a model directly.
+_ADDRESS_OPENER = re.compile(r"\bnotice to any\b", re.IGNORECASE)
+_ADDRESS_TARGET = re.compile(
+    r"\b(assistant|ai|language model|llm|chatbot)\b", re.IGNORECASE
 )
 
-_ANSWER_COERCION = re.compile(
-    r"\bmust (state|answer|respond)\b.{0,120}?\bwith full confidence\b"
-    r"|\bwith full confidence\b.{0,120}?\bmust (state|answer|respond)\b",
-    re.IGNORECASE | re.DOTALL,
+# Self-contained phrasings: subject and target are already adjacent, so there
+# is nothing to join and nothing for padding to get between.
+_ADDRESS_DIRECT = re.compile(
+    r"\bif you are (an? )?(ai|language model|assistant|chatbot)\b"
+    r"|\b(dear|attention)[:,]?\s+(any\s+)?(automated\s+)?(assistant|ai|language model|chatbot)\b",
+    re.IGNORECASE,
 )
+
+# Signal pair 2: a document that demands an assertion be made with certainty.
+_COERCION_IMPERATIVE = re.compile(r"\bmust (state|answer|respond)\b", re.IGNORECASE)
+_COERCION_CERTAINTY = re.compile(r"\bwith full confidence\b", re.IGNORECASE)
+
+_PARAGRAPH_SPLIT = re.compile(r"\n\s*\n")
+
+
+def _paragraphs(text: str) -> list[str]:
+    """Split on blank lines, before any whitespace collapsing.
+
+    Must run on the raw text: _collapse flattens blank lines away, so
+    collapsing first would destroy the only boundary this scope relies on.
+    """
+    return [chunk for chunk in _PARAGRAPH_SPLIT.split(text) if chunk.strip()]
+
+
+def _signal_spans(collapsed: str) -> list[tuple[int, int]]:
+    """Spans of every signal that fired in ONE paragraph, or [] if no pair.
+
+    A single signal is never enough: "the assistant director must respond
+    within one day" is one half of each pair and is not an attack.
+    """
+    spans: list[tuple[int, int]] = []
+
+    opener = [m.span() for m in _ADDRESS_OPENER.finditer(collapsed)]
+    target = [m.span() for m in _ADDRESS_TARGET.finditer(collapsed)]
+    if opener and target:
+        spans += opener + target
+
+    imperative = [m.span() for m in _COERCION_IMPERATIVE.finditer(collapsed)]
+    certainty = [m.span() for m in _COERCION_CERTAINTY.finditer(collapsed)]
+    if imperative and certainty:
+        spans += imperative + certainty
+
+    spans += [m.span() for m in _ADDRESS_DIRECT.finditer(collapsed)]
+    return spans
 
 _CONFUSABLES = str.maketrans({
     "\u0410": "A", "\u0412": "B", "\u0415": "E", "\u041a": "K", "\u041c": "M",
@@ -96,15 +160,24 @@ class SanitizeResult:
 
 
 def sanitize_text(text: str) -> SanitizeResult:
-    collapsed = re.sub(r"\s+", " ", text).strip()
-    spans = [m.span() for p in (_AI_DIRECTED_ADDRESS, _ANSWER_COERCION)
-             for m in p.finditer(collapsed)]
-    if not spans:
+    # _collapse, not a bare re.sub: it NFKC-normalises and folds _CONFUSABLES,
+    # so a Cyrillic character inside a trigger token cannot hide it. The table
+    # was already here and the decision path was not using it -- one Cyrillic
+    # "o" in "confidence" defeated detection entirely.
+    if not any(_signal_spans(_collapse(para)) for para in _paragraphs(text)):
         return SanitizeResult(sanitized_text=text)
 
-    # Decide on the whole text. Sentences are only used to explain why.
-    per_sentence = [s for s in _split_sentences(text)
-                    if _AI_DIRECTED_ADDRESS.search(s) or _ANSWER_COERCION.search(s)]
+    # Decide above; everything below only explains why, for the reviewer.
+    collapsed = _collapse(text)
+    spans = [
+        m.span()
+        for p in (_ADDRESS_OPENER, _ADDRESS_TARGET, _ADDRESS_DIRECT,
+                  _COERCION_IMPERATIVE, _COERCION_CERTAINTY)
+        for m in p.finditer(collapsed)
+    ]
+    per_sentence = [
+        s for s in _split_sentences(text) if _signal_spans(_collapse(s))
+    ]
     triggering = per_sentence or [collapsed[a:b] for a, b in spans]
     return SanitizeResult(sanitized_text=REDACTION_MARKER, triggering_sentences=triggering)
 
