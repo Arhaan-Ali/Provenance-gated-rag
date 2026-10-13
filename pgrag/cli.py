@@ -9,7 +9,7 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from pgrag.core.registry import Origin, ReviewDecision, TrustTier, needs_review
+from pgrag.core.registry import Origin, ReviewDecision, TrustTier, file_changes, needs_review
 
 # Rich turns colour off by itself when output is piped or NO_COLOR is set.
 console = Console(highlight=False)
@@ -103,7 +103,33 @@ def show_home(origins: int | None = None, documents: int | None = None,
 # ---------------------------------------------------------------------------
 
 
-def _origin_card(origin: Origin, why: str) -> Panel:
+# Enough to spot a planted file without flooding the screen for a big folder.
+MAX_FILES_SHOWN = 15
+
+
+def _file_lines(origin: Origin, previous: ReviewDecision | None) -> Text:
+    """The files this decision will approve. With an earlier file list on
+    record, only what changed since then: + added, ~ changed, - removed."""
+    if previous is not None and previous.files is not None:
+        added, changed, removed = file_changes(previous.files, origin.files)
+        entries = ([("+ " + f, "green") for f in added]
+                   + [("~ " + f, "yellow") for f in changed]
+                   + [("- " + f, "red") for f in removed])
+        if not entries:
+            entries = [("no file changes", "grey62")]
+    else:
+        entries = [(f, "white") for f in sorted(origin.files)]
+    out = Text()
+    for i, (line, style) in enumerate(entries[:MAX_FILES_SHOWN]):
+        if i:
+            out.append("\n")
+        out.append(line, style=style)
+    if len(entries) > MAX_FILES_SHOWN:
+        out.append(f"\n... and {len(entries) - MAX_FILES_SHOWN} more", style="grey62")
+    return out
+
+
+def _origin_card(origin: Origin, why: str, previous: ReviewDecision | None = None) -> Panel:
     """One origin as a card. Built from Text objects, so a '[' in a folder
     name or reason can never be read as Rich markup."""
     rows = Table.grid(padding=(0, 2))
@@ -115,6 +141,8 @@ def _origin_card(origin: Origin, why: str) -> Panel:
         edit.append(f"   capped  {origin.cap_note}", style="yellow")
     rows.add_row("EDITABILITY", edit)
     rows.add_row("DOCUMENTS", Text(f"{origin.document_count:,}"))
+    if origin.files:
+        rows.add_row("FILES", _file_lines(origin, previous))
     title = Text.assemble((origin.name + "/", "bold"), ("  ", ""), (f"[{why}]", "grey62"))
     return Panel(rows, title=title, title_align="left",
                  border_style=TIER_STYLE[origin.tier], box=box.ROUNDED, padding=(0, 1))
@@ -164,7 +192,7 @@ def run_review_gate(
             decisions.append(prev)
             continue
 
-        console.print(_origin_card(origin, why))
+        console.print(_origin_card(origin, why, prev))
         console.print(Text(f"  [Enter] stamp   [{_TIER_NAMES}] override tier   [x] reject", style="black on grey70"))
 
         while True:
@@ -189,6 +217,7 @@ def run_review_gate(
             origin.name, tier, excluded, overridden, reason,
             editability=origin.editability,
             reviewed_at=now,
+            files=dict(origin.files),  # exactly what this card showed
         ))
 
     _print_summary(decisions)

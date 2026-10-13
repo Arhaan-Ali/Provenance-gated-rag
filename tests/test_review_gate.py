@@ -28,7 +28,8 @@ def _count_questions(monkeypatch, reply=""):
 
 def _previous(name="wiki", days_ago=10, tier=TrustTier.B, editability=None):
     return ReviewDecision(name, tier, False, False, "reason",
-                          editability=editability, reviewed_at=NOW - timedelta(days=days_ago))
+                          editability=editability, reviewed_at=NOW - timedelta(days=days_ago),
+                          files={})
 
 
 # --- keystrokes -----------------------------------------------------------
@@ -222,3 +223,54 @@ def test_the_screen_says_why_an_origin_is_being_asked_again(monkeypatch, capsys)
     run_review_gate([_origin()], {"wiki": _previous(days_ago=120)}, now=NOW)
 
     assert "120 days" in capsys.readouterr().out
+
+
+# --- the reviewer sees, and approves, the exact file list -----------------
+
+def _origin_with_files(files, name="wiki"):
+    return Origin(name, TrustTier.B, "reason", len(files), None, files=files)
+
+
+def test_a_decision_records_the_file_list_the_card_showed(monkeypatch):
+    _answer(monkeypatch, "")
+    files = {"a.txt": "1" * 64, "b.txt": "2" * 64}
+
+    decisions = run_review_gate([_origin_with_files(files)], now=NOW)
+
+    assert decisions[0].files == files
+
+
+def test_a_new_origins_card_lists_its_files(monkeypatch, capsys):
+    _answer(monkeypatch, "")
+
+    run_review_gate([_origin_with_files({"a.txt": "1" * 64, "notes/b.md": "2" * 64})], now=NOW)
+
+    out = capsys.readouterr().out
+    assert "a.txt" in out and "notes/b.md" in out
+
+
+def test_a_file_planted_in_an_approved_origin_is_asked_about_and_shown(monkeypatch, capsys):
+    asked = _count_questions(monkeypatch)
+    before = {"a.txt": "1" * 64}
+    previous = {"wiki": ReviewDecision("wiki", TrustTier.B, False, False, "reason",
+                                       reviewed_at=NOW - timedelta(days=5), files=before)}
+
+    decisions = run_review_gate(
+        [_origin_with_files({**before, "planted.txt": "9" * 64})], previous, now=NOW)
+
+    out = capsys.readouterr().out
+    assert len(asked) == 1
+    assert "files changed since review: 1 added" in out
+    assert "+ planted.txt" in out
+    assert "planted.txt" in decisions[0].files
+
+
+def test_a_long_file_list_is_cut_short_on_the_card(monkeypatch, capsys):
+    _answer(monkeypatch, "")
+    files = {f"doc_{i:02}.txt": "1" * 64 for i in range(40)}
+
+    run_review_gate([_origin_with_files(files)], now=NOW)
+
+    out = capsys.readouterr().out
+    assert "doc_00.txt" in out
+    assert "and 25 more" in out

@@ -33,6 +33,7 @@ def _previous(tier=TrustTier.B, *, editability=None, overridden=False,
     return ReviewDecision(
         "wiki", tier, False, overridden, "reason", editability,
         NOW - timedelta(days=days_ago) if reviewed else None,
+        files={},  # same (empty) file list as _origin(), so only the field under test differs
     )
 
 

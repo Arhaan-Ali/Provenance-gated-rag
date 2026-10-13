@@ -3,7 +3,8 @@
 An index is only reusable if ALL of these still hold:
   1. it was built from the newest decisions file,
   2. the files under data/ are byte-for-byte what they were,
-  3. no origin is due for review (new, older than 90 days, tier or editability changed).
+  3. no origin is due for review (new, older than 90 days, tier or editability changed),
+  4. its documents were screened the same way as now (patterns only, or which model).
 Anything else and the caller must rebuild (which re-runs the review gate).
 """
 from __future__ import annotations
@@ -44,13 +45,15 @@ def data_fingerprint(corpus_dir: Path) -> str:
     return h.hexdigest()
 
 
-def write_manifest(persist_dir: Path, decisions_file: str, corpus_dir: Path) -> Path:
+def write_manifest(persist_dir: Path, decisions_file: str, corpus_dir: Path,
+                   screening: str = "patterns") -> Path:
     """Record what this index was built from. Call right after persisting the index."""
     persist_dir.mkdir(parents=True, exist_ok=True)
     path = persist_dir / MANIFEST_NAME
     path.write_text(json.dumps({
         "decisions_file": decisions_file,
         "data_fingerprint": data_fingerprint(corpus_dir),
+        "screening": screening,
         "built_at": datetime.now(timezone.utc).isoformat(),
     }, indent=2), encoding="utf-8")
     return path
@@ -72,6 +75,7 @@ def stale_reason(
         origins: list[Origin],
         decisions: dict[str, ReviewDecision],
         now: datetime | None = None,
+        screening: str = "patterns",
 ) -> str | None:
     """Why the saved index must be rebuilt, or None if it can be reused."""
     now = now or datetime.now(timezone.utc)
@@ -86,6 +90,11 @@ def stale_reason(
 
     if manifest.get("data_fingerprint") != data_fingerprint(corpus_dir):
         return "documents in data/ changed since the index was built"
+
+    # A manifest from before this was recorded was built with patterns only.
+    built_with = manifest.get("screening", "patterns")
+    if built_with != screening:
+        return f"documents were screened with {built_with}, now with {screening}"
 
     pending = origins_needing_review(origins, decisions, now)
     if pending:

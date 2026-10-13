@@ -89,6 +89,8 @@ class InjectionClassifier:
             _pipeline: Any = None,
             _loader: Callable[[], Any] | None = None,
     ) -> None:
+        self.model = model
+        self.revision = revision or _PINNED_REVISIONS.get(model)
         self._window = window_chars
         self._overlap = overlap_chars
         self._batch = batch_size
@@ -96,6 +98,11 @@ class InjectionClassifier:
         self._pipe = _pipeline
         # _pipeline / _loader exist so tests can supply a fake; real use passes neither.
         self._loader = _loader or (lambda: _load_pipeline(model, revision))
+
+    @property
+    def describe(self) -> str:
+        """Which weights this is, e.g. for recording what screened an index."""
+        return f"{self.model}@{self.revision or 'unpinned'}"
 
     @property
     def loaded(self) -> bool:
