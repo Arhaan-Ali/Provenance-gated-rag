@@ -5,8 +5,6 @@ import shutil
 import sys
 from pathlib import Path
 
-from llama_index.readers.file import PDFReader
-
 from llama_index.core import (
     Settings,
     SimpleDirectoryReader,
@@ -14,42 +12,44 @@ from llama_index.core import (
     VectorStoreIndex,
     load_index_from_storage,
 )
-
-
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.ollama import OllamaEmbedding
 from llama_index.llms.ollama import Ollama
+from llama_index.readers.file import PDFReader
 
-from pgrag.cli import  run_review_gate, show_home
-
+from pgrag.adapters.llamaindex import (
+    ORIGIN_KEY,
+    SANITIZER_FLAG_KEY,
+    TIER_KEY,
+    InstructionSanitizerPostprocessor,
+    stamp_documents,
+    to_nodes,
+)
+from pgrag.cli import run_review_gate, show_home
+from pgrag.core.freshness import stale_reason, write_manifest
 from pgrag.core.registry import (
     DecisionsError,
     discover_origins,
-    load_latest_decisions,
     latest_decisions_path,
+    load_latest_decisions,
     load_rules,
     save_decisions,
 )
-
-
 from pgrag.core.sanitizer import sanitize_documents
 
-
-from pgrag.adapters.llamaindex import stamp_documents, to_nodes, TIER_KEY, ORIGIN_KEY
-
-from pgrag.core.freshness import stale_reason, write_manifest
-
-DATA_DIR = Path("data")
-PERSIST_DIR = Path("storage")
-RESULTS_DIR = Path("results")
-TRUST_FILE = Path("trust.yaml")
-DECISIONS_DIR = Path("decisions")
+# Anchored to the project, not to the folder the command was typed in, so
+# `python -m demo.run` finds data/ and decisions/ from anywhere.
+ROOT = Path(__file__).resolve().parent.parent
+DATA_DIR = ROOT / "data"
+PERSIST_DIR = ROOT / "storage"
+RESULTS_DIR = ROOT / "results"
+TRUST_FILE = ROOT / "trust.yaml"
+DECISIONS_DIR = ROOT / "decisions"
 OLLAMA_URL = "http://localhost:11434"
 
 
-
 Settings.llm = Ollama(
-    model="qwen3:30b-a3b",
+    model="mistral",
     base_url=OLLAMA_URL,
     request_timeout=600.0,
     context_window=32768,
@@ -66,24 +66,23 @@ Settings.node_parser = SentenceSplitter(chunk_size=800, chunk_overlap=100)
 
 
 def make_reader() -> SimpleDirectoryReader:
+    """Built on demand, so importing this module never needs data/ to exist."""
     return SimpleDirectoryReader(
         str(DATA_DIR), recursive=True,
         required_exts=[".txt", ".md", ".pdf"],
-        file_extractor={".pdf": PDFReader(return_full_document=True)},
+        file_extractor={".pdf": PDFReader(return_full_document=True)},   # whole document, not per page
     )
 
 
 def build_index() -> VectorStoreIndex:
     """Review every origin, then embed only what was approved."""
-
-
     if not DATA_DIR.is_dir():
-        sys.exit(f"Put your documents in ./{DATA_DIR}/<origin-folder>/ first.")
+        sys.exit(f"Put your documents in {DATA_DIR}/<origin-folder>/ first.")
 
     rules = load_rules(TRUST_FILE)
     origins = discover_origins(DATA_DIR, rules)
     if not origins:
-        sys.exit(f"No origin folders found in ./{DATA_DIR}/. Each subfolder is one origin.")
+        sys.exit(f"No origin folders found in {DATA_DIR}/. Each subfolder is one origin.")
 
     previous = load_latest_decisions(DECISIONS_DIR)
     decisions = run_review_gate(origins, previous)
@@ -158,24 +157,51 @@ def save_last(last: dict, name: str) -> None:
     print(f"Saved to {path}\n")
 
 
+def make_classifier():
+    """The second-stage injection model. Cheap to build: it loads on first use.
+
+    Only the packages are checked here (without importing them), so a missing
+    install fails now with the fix, not halfway through the first question.
+    """
+    import importlib.util
+
+    missing = [m for m in ("torch", "transformers") if importlib.util.find_spec(m) is None]
+    if missing:
+        sys.exit(f"The injection model needs: pip install {' '.join(missing)}\n"
+                 "(or run with --no-classifier to use the pattern check only)")
+    from pgrag.adapters.injection_classifier import InjectionClassifier
+    return InjectionClassifier()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="Local RAG with provenance gating.")
     ap.add_argument("--reindex", action="store_true",
                     help="discard the cached index and re-run the review gate")
+    ap.add_argument("--no-classifier", action="store_true",
+                    help="patterns only: skip the local injection model")
     args = ap.parse_args()
 
-    first_run = latest_decisions_path(DECISIONS_DIR) is None
-    if first_run:
+    # Automatic: each retrieved chunk goes through the pattern check first and
+    # reaches the model only if the patterns found nothing. The model loads on
+    # that first need, not at startup. A missing package fails now, loudly,
+    # because quietly running without stage 2 would look like "nothing found".
+    classifier = None if args.no_classifier else make_classifier()
+
+    if latest_decisions_path(DECISIONS_DIR) is None:
         show_home()
 
     try:
         index = get_index(force_reindex=args.reindex)
     except DecisionsError as e:
         sys.exit(f"Cannot continue: {e}")
+
+    # Every retrieved chunk is screened before the model reads it: the pattern
+    # check first, then the classifier unless --no-classifier was given.
     query_engine = index.as_query_engine(
         similarity_top_k=5,
         response_mode="compact",
         streaming=False,
+        node_postprocessors=[InstructionSanitizerPostprocessor(classifier=classifier)],
     )
 
     last = None
@@ -212,7 +238,9 @@ def main() -> None:
             origin = meta.get(ORIGIN_KEY, "?")
             fname = meta.get("file_name", "?")
             score = float(node.score or 0)
-            print(f"[{score:.3f}] [tier {tier}] {origin}/{fname}: {node.text[:120].strip()}...")
+            quarantined = " [QUARANTINED]" if meta.get(SANITIZER_FLAG_KEY) else ""
+            print(f"[{score:.3f}] [tier {tier}]{quarantined} {origin}/{fname}: "
+                  f"{node.text[:120].strip()}...")
             srcs.append((score, tier, origin, fname, node.text))
         print()
 

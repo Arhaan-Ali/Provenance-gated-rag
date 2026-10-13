@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typing import Any
+
+from pgrag.core.sanitizer import DEFAULT_THRESHOLD, REDACTION_MARKER, screen_text
 
 
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
@@ -12,7 +15,7 @@ from pgrag.core.registry import (
     origin_of,
     tier_for_document,
 )
-from pgrag.core.sanitizer import sanitize_text
+
 
 TIER_KEY = "_prov_tier"
 ORIGIN_KEY = "_prov_origin"
@@ -100,17 +103,20 @@ def to_nodes(documents, provenance: dict[str, dict[str, str]], transformations):
 
 
 class InstructionSanitizerPostprocessor(BaseNodePostprocessor):
-    """Redact retrieved chunks that instruct a model, between retrieval and the LLM.
+    """Screen the chunks a query retrieved, i.e. exactly what the model will read.
 
-    Defence in depth only. sanitize_documents() in pgrag.core.sanitizer is
-    what actually protects the index, because this cannot see a document it
-    was never handed: pad an attack past the chunk size and the chunk
-    carrying the directive may not even be retrieved, while the one carrying
-    the false claim has nothing in it to match on.
+    Two stages (see pgrag.core.sanitizer.screen_text): the patterns first, and
+    only if they find nothing, the optional classifier. A flagged chunk is
+    quarantined -- its text is replaced by the redaction marker, so the model
+    never sees it -- and the query carries on with the rest.
 
-    Worth running anyway for an index built elsewhere, or one built before
-    the filter existed.
+    This is the second line behind sanitize_documents(), not a replacement:
+    it can only judge chunks that were retrieved, so a hostile document whose
+    directive sits in a chunk that was NOT retrieved is invisible here.
     """
+
+    classifier: Any = None            # text -> score in [0, 1]; None = patterns only
+    threshold: float = DEFAULT_THRESHOLD
 
     @classmethod
     def class_name(cls) -> str:
@@ -122,11 +128,9 @@ class InstructionSanitizerPostprocessor(BaseNodePostprocessor):
         query_bundle: QueryBundle | None = None,
     ) -> list[NodeWithScore]:
         for node_with_score in nodes:
-            result = sanitize_text(node_with_score.node.text)
+            result = screen_text(node_with_score.node.text, self.classifier, self.threshold)
             if result.flagged:
-                node_with_score.node.set_content(result.sanitized_text)
+                node_with_score.node.set_content(REDACTION_MARKER)
                 node_with_score.node.metadata[SANITIZER_FLAG_KEY] = True
-                # Same reasoning as the provenance keys: a flag the model can
-                # read is a flag the model can be talked out of.
                 _hide(node_with_score.node)
         return nodes

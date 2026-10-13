@@ -29,7 +29,16 @@ gate's job: it refuses the resulting action rather than detecting the text.
 The two are complementary, and tests/test_sanitizer.py asserts the gap is
 still there so nobody widens these patterns by accident.
 
-No llama_index import on purpose, same as the rest of pgrag/core.
+Two stages. The patterns below are stage 1: free, explainable, English-only.
+An optional classifier is stage 2, consulted only when stage 1 found nothing
+(screen_text). Either stage can run on whole documents at ingestion
+(sanitize_documents) and on the chunks a query actually retrieved (the
+postprocessor in the llamaindex adapter) -- the second is what the model is
+about to read, so it catches a document that reached the index by another
+route, at the price of seeing only the retrieved chunks.
+
+No llama_index import on purpose, same as the rest of pgrag/core. The
+classifier is injected as a function for the same reason.
 """
 from __future__ import annotations
 
@@ -37,6 +46,7 @@ import re
 import unicodedata
 
 from dataclasses import dataclass, field
+from typing import Callable
 
 REDACTION_MARKER = (
     "[REDACTED: this chunk instructed a model how to answer and was dropped by the sanitizer]"
@@ -81,7 +91,8 @@ _ADDRESS_TARGET = re.compile(
 # is nothing to join and nothing for padding to get between.
 _ADDRESS_DIRECT = re.compile(
     r"\bif you are (an? )?(ai|language model|assistant|chatbot)\b"
-    r"|\b(dear|attention)[:,]?\s+(any\s+)?(automated\s+)?(assistant|ai|language model|chatbot)\b",
+    r"|\b(dear|attention)[:,]?\s+(any\s+)?(automated\s+)?(assistant|ai|language model|chatbot)\b"
+    r"|\binstructions? to (the |any |this )?(ai|llm|language model|chatbot)\b(?! (team|policy|ethics))",
     re.IGNORECASE,
 )
 
@@ -129,21 +140,40 @@ _CONFUSABLES = str.maketrans({
     "\u0441": "c", "\u0443": "y", "\u0445": "x", "\u0456": "i",
 })
 
-def _collapse(text: str) -> str:
+# Unicode categories that render as nothing: Cf (format: zero-width space,
+# joiners, soft hyphen, the U+E0000 "tag" block), Co (private use), Cn
+# (unassigned). NFKC does not remove them, so one of these inside a trigger
+# word ("conf​idence") used to defeat every pattern below.
+_INVISIBLE_CATEGORIES = frozenset({"Cf", "Co", "Cn"})
+
+
+def _collapse(text: str, invisible_as: str = "") -> str:
+    """The detection copy of a text. Never stored, never shown to a model.
+
+    invisible_as is what an invisible character becomes. Both answers are
+    needed because the attacker picks the role it plays: inside a word it
+    must vanish ("conf<ZWSP>idence" -> "confidence"), used as the gap between
+    words it must become a space ("with<ZWSP>full<ZWSP>confidence"). Removing
+    it can only fix the first; so callers scan both (see sanitize_text).
+    """
     text = unicodedata.normalize("NFKC", text).translate(_CONFUSABLES)
+    text = "".join(
+        invisible_as if unicodedata.category(ch) in _INVISIBLE_CATEGORIES else ch
+        for ch in text
+    )
     return re.sub(r"\s+", " ", text).strip()
 
 
 _SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 
-def _split_sentences(text: str) -> list[str]:
+def _split_sentences(text: str, invisible_as: str = "") -> list[str]:
     """Collapse whitespace, then split on sentence-ending punctuation.
 
     Line wrapping inside a paragraph is not a sentence break, which is why
     the whitespace is collapsed first.
     """
-    collapsed = _collapse(text)
+    collapsed = _collapse(text, invisible_as)
     return [s for s in _SENTENCE_SPLIT.split(collapsed) if s]
 
 
@@ -159,16 +189,16 @@ class SanitizeResult:
         return bool(self.triggering_sentences)
 
 
-def sanitize_text(text: str) -> SanitizeResult:
-    # _collapse, not a bare re.sub: it NFKC-normalises and folds _CONFUSABLES,
-    # so a Cyrillic character inside a trigger token cannot hide it. The table
-    # was already here and the decision path was not using it -- one Cyrillic
-    # "o" in "confidence" defeated detection entirely.
-    if not any(_signal_spans(_collapse(para)) for para in _paragraphs(text)):
-        return SanitizeResult(sanitized_text=text)
+def _scan(text: str, invisible_as: str) -> list[str]:
+    """Why the text fired under ONE reading of its invisible characters, or [].
 
-    # Decide above; everything below only explains why, for the reviewer.
-    collapsed = _collapse(text)
+    The decision and the explanation use the same reading on purpose: flagged
+    is defined as "there is an explanation", so they must never disagree.
+    """
+    if not any(_signal_spans(_collapse(para, invisible_as)) for para in _paragraphs(text)):
+        return []
+
+    collapsed = _collapse(text, invisible_as)
     spans = [
         m.span()
         for p in (_ADDRESS_OPENER, _ADDRESS_TARGET, _ADDRESS_DIRECT,
@@ -176,20 +206,105 @@ def sanitize_text(text: str) -> SanitizeResult:
         for m in p.finditer(collapsed)
     ]
     per_sentence = [
-        s for s in _split_sentences(text) if _signal_spans(_collapse(s))
+        s for s in _split_sentences(text, invisible_as)
+        if _signal_spans(_collapse(s, invisible_as))
     ]
-    triggering = per_sentence or [collapsed[a:b] for a, b in spans]
-    return SanitizeResult(sanitized_text=REDACTION_MARKER, triggering_sentences=triggering)
+    return per_sentence or [collapsed[a:b] for a, b in spans]
 
-def sanitize_documents(documents) -> tuple[list, list]:
+
+def sanitize_text(text: str) -> SanitizeResult:
+    """Stage 1: the pattern check. Cheap, deterministic, English-only.
+
+    _collapse, not a bare re.sub: it NFKC-normalises, folds _CONFUSABLES, and
+    removes invisible characters, so neither a Cyrillic look-alike nor a
+    zero-width space inside a trigger token can hide it. The text is read
+    twice (invisible characters deleted, then turned into spaces) because the
+    attacker chooses which of the two the character is standing in for.
+    """
+    for invisible_as in ("", " "):
+        triggering = _scan(text, invisible_as)
+        if triggering:
+            return SanitizeResult(sanitized_text=REDACTION_MARKER, triggering_sentences=triggering)
+    return SanitizeResult(sanitized_text=text)
+
+
+# --- two-stage screening ------------------------------------------------------
+#
+# Stage 1 is sanitize_text() above. Stage 2 is an optional model that scores
+# how much the text reads like an injection. The order is the whole design:
+#
+#   patterns hit        -> flagged, STOP. The model is never called.
+#   patterns clean      -> ask the model, flagged if its score >= threshold.
+#   no model configured -> stage 1 alone, exactly the old behaviour.
+#
+# Patterns go first because they are free and explainable (the reviewer is
+# shown the sentence that fired); the model is slow and gives a number, not a
+# reason. A pattern hit also means the model's opinion could not change the
+# outcome, so asking it would be wasted time.
+#
+# The model is passed IN as a plain function, text -> score in [0, 1]. This
+# module never imports it: pgrag/core stays standard-library only, and the
+# real classifier (torch, transformers) lives in pgrag/adapters. Tests use a
+# fake. If the classifier raises, the exception propagates -- a scanner that
+# fails quietly would read as "nothing found".
+
+Classifier = Callable[[str], float]
+DEFAULT_THRESHOLD = 0.92
+
+
+@dataclass
+class ScreenResult:
+    """Outcome of screening one text.
+
+    stage names the stage that DECIDED: "patterns" when they fired, or when
+    no model is configured; "classifier" whenever the model was consulted
+    (flagged or not). score is the model's score, None if it never ran.
+    """
+
+    flagged: bool
+    stage: str
+    score: float | None = None
+    reasons: list[str] = field(default_factory=list)
+
+
+def screen_text(
+        text: str,
+        classifier: Classifier | None = None,
+        threshold: float = DEFAULT_THRESHOLD,
+) -> ScreenResult:
+    hit = sanitize_text(text)
+    if hit.flagged:
+        return ScreenResult(True, "patterns", None, hit.triggering_sentences)
+
+    if classifier is None or not text.strip():
+        return ScreenResult(False, "patterns")
+
+    # The model reads the same normalised copy the patterns read, so the
+    # invisible-character and homoglyph tricks do not work on it either.
+    # (Side effect: Cyrillic letters are folded to Latin look-alikes; this
+    # corrupts genuine Russian text before scoring. Devanagari, Spanish etc.
+    # are untouched.)
+    score = float(classifier(_collapse(text)))
+    if score >= threshold:
+        return ScreenResult(True, "classifier", score,
+                            [f"classifier score {score:.2f} >= threshold {threshold:.2f}"])
+    return ScreenResult(False, "classifier", score)
+
+
+def sanitize_documents(
+        documents,
+        classifier: Classifier | None = None,
+        threshold: float = DEFAULT_THRESHOLD,
+) -> tuple[list, list]:
     """Drop whole documents that instruct a model. Returns (kept, dropped).
 
     Call this before chunking and before stamping -- see the module
     docstring for why the whole-document decision is the load-bearing one.
+    With classifier=None this is the old patterns-only behaviour.
     """
     kept, dropped = [], []
     for document in documents:
-        if sanitize_text(document.text).flagged:
+        if screen_text(document.text, classifier, threshold).flagged:
             dropped.append(document)
         else:
             kept.append(document)
