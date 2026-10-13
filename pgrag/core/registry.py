@@ -4,10 +4,21 @@ from __future__ import annotations
 import re
 import yaml
 import json
-from dataclasses import dataclass
+import hashlib
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from enum import IntEnum
 from pathlib import Path
+
+from pgrag.core.signing import (
+    SIGNATURE_KEY,
+    key_dir,
+    load_key,
+    read_head,
+    sign,
+    verify,
+    write_head,
+)
 
 
 class TrustTier(IntEnum):
@@ -79,6 +90,9 @@ class Origin:
     document_count: int
     editability: str | None = None
     cap_note: str | None = None
+    # relative path inside the origin folder -> sha256 of its contents. This is
+    # exactly what the reviewer is shown, and what a decision approves.
+    files: dict[str, str] = field(default_factory=dict)
 
 @dataclass
 class ReviewDecision:
@@ -91,6 +105,10 @@ class ReviewDecision:
     reason: str
     editability: str | None = None
     reviewed_at: datetime | None = None
+    # The file list (path -> sha256) the reviewer saw. A file not in here, or
+    # whose contents no longer match, was never approved. None = recorded
+    # before file lists existed, so it has to be asked about again.
+    files: dict[str, str] | None = None
 
 
 _TEMPLATE = """\
@@ -169,6 +187,31 @@ def apply_editability_cap(tier, editability):
     why = f"editable by {editability}" if editability else "editability not declared in trust.yaml"
     return cap, f"{tier.name} -> {cap.name}: {why}"
 
+def file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def origin_files(folder: Path) -> dict[str, str]:
+    """Every file under one origin folder, as relative path -> sha256."""
+    return {
+        f.relative_to(folder).as_posix(): file_sha256(f)
+        for f in sorted(folder.rglob("*"))
+        if f.is_file()
+    }
+
+
+def file_changes(old: dict[str, str], new: dict[str, str]) -> tuple[list[str], list[str], list[str]]:
+    """(added, changed, removed) going from the old file list to the new one."""
+    added = sorted(set(new) - set(old))
+    removed = sorted(set(old) - set(new))
+    changed = sorted(k for k in set(old) & set(new) if old[k] != new[k])
+    return added, changed, removed
+
+
 def discover_origins(corpus_dir: Path, rules: dict[str, Rule]) -> list[Origin]:
     """Scan corpus_dir for per-origin subfolders and compute each one's tier."""
 
@@ -177,17 +220,17 @@ def discover_origins(corpus_dir: Path, rules: dict[str, Rule]) -> list[Origin]:
     for entry in sorted(corpus_dir.iterdir()):
         if not entry.is_dir():
             continue
-        document_count = sum(1 for f in entry.rglob("*") if f.is_file())
+        files = origin_files(entry)
         rule = rules.get(entry.name)
         if rule is None:
             origins.append(Origin(
                 entry.name, DEFAULT_TIER,
                 "External or Unknown Origin, not listed in trust.yaml -> defaulting to lowest tier",
-                document_count,
+                len(files), files=files,
             ))
             continue
         tier, cap_note = apply_editability_cap(rule.tier, rule.editability)
-        origins.append(Origin(entry.name, tier, rule.reason, document_count, rule.editability, cap_note))
+        origins.append(Origin(entry.name, tier, rule.reason, len(files), rule.editability, cap_note, files))
     return origins
 
 def needs_review(origin, previous, now) -> str | None:
@@ -203,6 +246,15 @@ def needs_review(origin, previous, now) -> str | None:
         return "editability changed in trust.yaml"
     if not previous.overridden and previous.tier != origin.tier:
         return "tier changed in trust.yaml"
+    # Approving a folder approves the files the reviewer saw, not whatever is
+    # put in it later. Any addition, edit or removal is asked about again.
+    if previous.files is None:
+        return "no file list on record"
+    added, changed, removed = file_changes(previous.files, origin.files)
+    if added or changed or removed:
+        parts = [f"{len(xs)} {what}" for xs, what in
+                 ((added, "added"), (changed, "changed"), (removed, "removed")) if xs]
+        return "files changed since review: " + ", ".join(parts)
     return None
 
 
@@ -234,9 +286,14 @@ def _versions(decisions_dir: Path) -> list[tuple[int, Path]]:
 
 
 def save_decisions(decisions: list[ReviewDecision], decisions_dir: Path) -> Path:
-    """Persist the decision set as a new, immutable, versioned audit file."""
+    """Persist the decision set as a new, signed, versioned audit file that
+    chains to the previous one (see pgrag/core/signing.py)."""
 
     decisions_dir.mkdir(parents=True, exist_ok=True)
+    # Refuse to extend a trail that has been tampered with. Checked before the
+    # key is created, so a missing key cannot be papered over by a fresh one.
+    trusted = _trusted_latest(decisions_dir)
+    key = load_key(create=True)
     existing = _versions(decisions_dir)
     next_version = (existing[-1][0] if existing else 0) + 1
     out_path = decisions_dir / f"decisions_v{next_version}.json"
@@ -256,11 +313,16 @@ def save_decisions(decisions: list[ReviewDecision], decisions_dir: Path) -> Path
                 "reason": d.reason,
                 "editability": d.editability,
                 "reviewed_at": (d.reviewed_at or now).isoformat(),
+                "files": d.files,
             }
             for d in decisions
         ],
+        # None starts a new chain: first run, or only unsigned files before.
+        "previous_signature": trusted[1][SIGNATURE_KEY] if trusted else None,
     }
+    payload[SIGNATURE_KEY] = sign(payload, key)
     out_path.write_text(json.dumps(payload, indent=2), encoding= "utf-8")
+    write_head(decisions_dir, next_version, payload[SIGNATURE_KEY])
     return out_path
 
 def latest_decisions_path(decisions_dir: Path) -> Path | None:
@@ -270,16 +332,91 @@ def latest_decisions_path(decisions_dir: Path) -> Path | None:
     return existing[-1][1] if existing else None
 
 
-def load_latest_decisions(decisions_dir: Path) -> dict[str, ReviewDecision]:
-    """Load the newest decision file, keyed by origin name. Empty if none yet."""
-
-    existing = latest_decisions_path(decisions_dir)
-    if existing is None:
-        return {}
+def _read_payload(path: Path) -> dict:
     try:
-        payload = json.loads(existing.read_text(encoding="utf-8"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
     except ValueError as e:
-        raise DecisionsError(f"{existing.name}: not valid JSON ({e})") from None
+        raise DecisionsError(f"{path.name}: not valid JSON ({e})") from None
+    if not isinstance(payload, dict):
+        raise DecisionsError(f"{path.name}: expected a JSON object")
+    return payload
+
+
+def _trusted_latest(decisions_dir: Path) -> tuple[Path, dict] | None:
+    """The newest decisions file, once its whole signed chain has checked out.
+
+    None if there is nothing to trust yet: no files, or only unsigned ones
+    written before signing existed (those are never trusted, so every origin
+    is reviewed again). Raises DecisionsError on anything that looks like
+    tampering - nothing is indexed until a human looks.
+    """
+    existing = _versions(decisions_dir)
+    head = read_head(decisions_dir)
+
+    if not existing:
+        if head:
+            raise DecisionsError(
+                f"{decisions_dir} is empty, but v{head['version']} was signed - "
+                "decision files were deleted")
+        return None
+
+    latest_path = existing[-1][1]
+    latest = _read_payload(latest_path)
+    if SIGNATURE_KEY not in latest:
+        if head is None:
+            return None
+        raise DecisionsError(
+            f"{latest_path.name} is not signed, but v{head['version']} was - "
+            "it was not written by the review gate")
+
+    key = load_key()
+    if key is None:
+        raise DecisionsError(
+            f"{latest_path.name} is signed, but there is no key in {key_dir()} to check it")
+
+    # Walk back from the newest file to the start of its chain.
+    by_version = dict(existing)
+    version, path, payload = existing[-1][0], latest_path, latest
+    signatures: dict[int, str] = {}
+    while True:
+        if not verify(payload, key):
+            raise DecisionsError(
+                f"{path.name}: signature does not match - edited, or not written by the review gate")
+        if payload.get("version") != version:
+            raise DecisionsError(f"{path.name}: says version {payload.get('version')!r}, file name says {version}")
+        signatures[version] = payload[SIGNATURE_KEY]
+        previous = payload.get("previous_signature")
+        if previous is None:
+            break
+        version -= 1
+        path = by_version.get(version)
+        if path is None:
+            raise DecisionsError(f"decisions_v{version}.json is missing from the signed chain")
+        payload = _read_payload(path)
+        if payload.get(SIGNATURE_KEY) != previous:
+            raise DecisionsError(f"{path.name} is not the version v{version + 1} was signed after")
+
+    # The head is what was last signed here. The chain must still contain it,
+    # so deleting the newest file (a rollback) cannot go unnoticed. A chain
+    # that runs past the head is fine: only the key can sign, and that covers
+    # a crash between writing a file and writing the head.
+    if head is not None and signatures.get(head.get("version")) != head.get("signature"):
+        raise DecisionsError(
+            f"v{head.get('version')} was the newest signed decisions file, and it is gone or "
+            f"changed (newest now: {latest_path.name}) - an older decision was put back")
+    if head is None or head.get("version") != existing[-1][0]:
+        write_head(decisions_dir, existing[-1][0], latest[SIGNATURE_KEY])
+    return latest_path, latest
+
+
+def load_latest_decisions(decisions_dir: Path) -> dict[str, ReviewDecision]:
+    """Load the newest decision file, keyed by origin name. Empty if there is
+    nothing trusted yet. Raises DecisionsError if the signed trail was tampered with."""
+
+    trusted = _trusted_latest(decisions_dir)
+    if trusted is None:
+        return {}
+    existing, payload = trusted
     file_date = payload.get("decided_at")
 
     result: dict[str, ReviewDecision] = {}
@@ -296,6 +433,13 @@ def load_latest_decisions(decisions_dir: Path) -> dict[str, ReviewDecision]:
         except KeyError:
             raise DecisionsError(f"{existing.name}: unknown tier {d['tier']!r} for {name!r}") from None
 
+        files = d.get("files")
+        if files is not None and not (
+                isinstance(files, dict)
+                and all(isinstance(k, str) and isinstance(v, str) for k, v in files.items())):
+            raise DecisionsError(
+                f"{existing.name}: 'files' for {name!r} must map file paths to sha256 hashes")
+
         result[name] = ReviewDecision(
             origin_name=name,
             tier=tier,
@@ -305,6 +449,7 @@ def load_latest_decisions(decisions_dir: Path) -> dict[str, ReviewDecision]:
             editability=d.get("editability"),
             reviewed_at=_parse_date(d.get("reviewed_at") or file_date,
                                     f"{existing.name}: reviewed_at for {name!r}"),
+            files=files,
         )
     return result
 
@@ -334,7 +479,12 @@ def tier_for_document(
         corpus_dir: Path,
         decisions: dict[str, ReviewDecision],
 ) -> TrustTier | None:
-    """Approved tier for one document, or None if it must not be ingested."""
+    """Approved tier for one document, or None if it must not be ingested.
+
+    When the decision carries a file list, the document must be in it with the
+    same contents as when it was reviewed. Checked here, at indexing time, so a
+    file added or swapped after the review card was shown is dropped.
+    """
 
     name = origin_of(doc_path, corpus_dir)
     if name is None:
@@ -344,4 +494,12 @@ def tier_for_document(
         return DEFAULT_TIER
     if decision.excluded:
         return None
+    if decision.files is not None:
+        resolved = doc_path.resolve()
+        key = resolved.relative_to((corpus_dir / name).resolve()).as_posix()
+        try:
+            if decision.files.get(key) != file_sha256(resolved):
+                return None
+        except OSError:
+            return None
     return decision.tier

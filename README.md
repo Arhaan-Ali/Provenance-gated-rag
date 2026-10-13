@@ -83,8 +83,18 @@ demotes, and it records a note the review screen shows -- for example
 `needs_review(origin, previous, now)` returns why an origin must be shown
 to a human again, or `None` to reuse the settled decision. It re-triggers
 on a new origin, a decision with no timestamp, a decision older than
-`REVIEW_MAX_AGE_DAYS` (90), a changed `editability`, or a changed computed
-tier.
+`REVIEW_MAX_AGE_DAYS` (90), a changed `editability`, a changed computed
+tier, or any file added, edited or removed in the origin folder.
+
+### A decision approves files, not a folder
+
+The review card lists the files it is approving (or, on a re-review, only
+what was added `+`, changed `~` or removed `-`), and the decision records each
+file's sha256. At indexing time `tier_for_document` re-hashes every document
+and drops one that is not on that list or no longer matches it -- so a file
+planted in an approved folder, or swapped after the card was shown, is never
+indexed at the folder's tier. A decision saved before file lists existed has
+none on record, so it is asked about once more.
 
 A reviewer's override is deliberate, so a computed tier that disagrees with
 one is not treated as drift -- otherwise every run would ask again about a
@@ -103,8 +113,19 @@ override is not permanent either.
   a note explaining the demotion, or `None` if nothing was capped.
 - `needs_review(origin, previous, now)` -- why to re-review, or `None`.
 - `save_decisions(...)` / `load_latest_decisions(...)` /
-  `latest_decisions_path(...)` -- an immutable, versioned JSON audit trail.
+  `latest_decisions_path(...)` -- a signed, versioned JSON audit trail.
   Versions are compared numerically, so `v10` sorts after `v9`.
+
+  Each `decisions_vN.json` is signed (HMAC-SHA256, `pgrag/core/signing.py`)
+  with a key kept outside the project, in `~/.config/pgrag/review.key`
+  (override with `PGRAG_KEY_DIR`), and records the signature of the version
+  before it. The newest signed version is also recorded next to the key.
+  So write access to `decisions/` is not enough to forge a decision, edit or
+  delete an old one, or delete the newest to bring an older one back -- any
+  of those stops the run with a `DecisionsError` and nothing is indexed.
+  Unsigned files from before signing are never trusted: every origin is
+  reviewed once more and a new chain starts. Back up the key directory with
+  `decisions/`; without the key, the existing trail cannot be verified.
 - `origin_of(...)` / `tier_for_document(...)` -- per-document lookups.
   `None` means the document must not be ingested.
 
@@ -119,6 +140,11 @@ override is not permanent either.
   quietly change a node's tier.
 - `to_nodes(documents, provenance, transformations)` -- runs the
   transforms, then re-stamps as the last step.
+- `run_gated_turn(llm, question, nodes, tools)` -- answers one question
+  from the retrieved chunks with the capability gate enforced: the model is
+  offered only the tools the weakest chunk allows, and every tool call is
+  checked again before it runs, so a tool the model asks for without being
+  offered is refused. A chunk with no tier counts as `D`.
 
 Two details in the adapter are easy to miss and both matter:
 
@@ -136,6 +162,12 @@ Two details in the adapter are easy to miss and both matter:
 the weakest tier present in retrieved context. One low-tier chunk withholds
 every tool above it. Nothing here inspects content, so it still holds when
 injection detection fails, and an empty context counts as the lowest tier.
+
+`demo/run.py` enforces it on every question through `run_gated_turn`, using
+the mock tools in `demo/tools.py` (they only print what they would do), and
+prints which tools the turn was allowed and which were withheld. The demo
+keeps no conversation memory, so each turn is gated on its own chunks only;
+adding memory would mean carrying the lowest tier seen forward with it.
 
 **`pgrag/core/sanitizer.py`**
 

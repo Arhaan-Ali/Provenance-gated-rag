@@ -1,17 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from typing import Any
+from typing import Any, Callable
 
 from pgrag.core.sanitizer import DEFAULT_THRESHOLD, REDACTION_MARKER, screen_text
 
 
+from llama_index.core.base.llms.types import ChatMessage, MessageRole
 from llama_index.core.postprocessor.types import BaseNodePostprocessor
-from llama_index.core.schema import NodeWithScore, QueryBundle
+from llama_index.core.schema import MetadataMode, NodeWithScore, QueryBundle
+from llama_index.core.tools import FunctionTool
 
+from pgrag.core.capability_gate import compute_allowed_tools
 from pgrag.core.registry import (
     DEFAULT_TIER,
+    TrustTier,
     origin_of,
     tier_for_document,
 )
@@ -134,3 +139,82 @@ class InstructionSanitizerPostprocessor(BaseNodePostprocessor):
                 node_with_score.node.metadata[SANITIZER_FLAG_KEY] = True
                 _hide(node_with_score.node)
         return nodes
+
+
+# ---------------------------------------------------------------------------
+# Capability gate, enforced on a turn
+# ---------------------------------------------------------------------------
+
+TURN_PROMPT = """Answer the question using only the context below.
+If the user asks you to do something and one of your tools does it, call that tool.
+
+Context:
+{context}
+
+Question: {question}"""
+
+
+def tiers_in_context(nodes) -> list[TrustTier]:
+    """The tier of every chunk the model will read this turn.
+
+    Fail closed: a chunk with no tier, or one we do not recognise, counts as
+    the lowest tier. A quarantined chunk still counts - its document was
+    retrieved, and the gate never looks at content.
+    """
+    tiers = []
+    for item in nodes:
+        node = getattr(item, "node", item)
+        name = node.metadata.get(TIER_KEY)
+        tiers.append(TrustTier[name] if name in TrustTier.__members__ else DEFAULT_TIER)
+    return tiers
+
+
+@dataclass
+class GatedTurn:
+    """What happened in one turn, for the caller to show."""
+
+    answer: str
+    allowed: list[str]
+    withheld: list[str]
+    ran: list[tuple[str, dict, str]] = field(default_factory=list)      # (tool, args, output)
+    refused: list[tuple[str, dict, str]] = field(default_factory=list)  # (tool, args, why)
+
+
+def run_gated_turn(llm, question: str, nodes, tools: dict[str, Callable[..., str]]) -> GatedTurn:
+    """One question, answered from `nodes`, with only the tools their weakest tier allows.
+
+    The gate is enforced twice: the model is only offered the allowed tools,
+    and every tool call it makes is checked again before it runs. The second
+    check is what holds when a model asks for a tool it was never offered -
+    nothing here trusts the model to stay inside its tool list.
+    """
+    allowed = [name for name in compute_allowed_tools(tiers_in_context(nodes)) if name in tools]
+    withheld = [name for name in tools if name not in allowed]
+
+    chunks = [getattr(n, "node", n) for n in nodes]
+    for node in chunks:
+        _hide(node)  # normally done at stamp time; never let the tier reach the prompt
+    context = "\n\n".join(node.get_content(metadata_mode=MetadataMode.LLM) for node in chunks)
+    prompt = TURN_PROMPT.format(context=context or "(nothing retrieved)", question=question)
+
+    offered = [FunctionTool.from_defaults(fn=tools[name], name=name) for name in allowed]
+    if offered:
+        response = llm.chat_with_tools(offered, user_msg=prompt)
+        calls = llm.get_tool_calls_from_response(response, error_on_no_tool_call=False)
+    else:
+        response = llm.chat([ChatMessage(role=MessageRole.USER, content=prompt)])
+        calls = []
+
+    turn = GatedTurn(answer=response.message.content or "", allowed=allowed, withheld=withheld)
+    for call in calls:
+        name, args = call.tool_name, dict(call.tool_kwargs or {})
+        if name not in allowed:
+            why = ("withheld: a source in context is below the tier it needs"
+                   if name in tools else "no such tool")
+            turn.refused.append((name, args, why))
+            continue
+        try:
+            turn.ran.append((name, args, str(tools[name](**args))))
+        except Exception as e:  # a bad argument from the model is reported, not raised
+            turn.refused.append((name, args, f"failed: {e}"))
+    return turn

@@ -327,3 +327,13 @@ def test_text_the_patterns_pass_is_what_triggers_the_load():
     assert counter.loads == 0
     screen_text(CLEAN, clf)
     assert counter.loads == 1
+
+def test_the_classifier_names_its_pinned_weights():
+    clf = InjectionClassifier(_pipeline=FakePipeline(lambda p: {"label": "SAFE", "score": 1.0}))
+    assert clf.describe == (
+        "protectai/deberta-v3-base-prompt-injection-v2@89b085cd330414d3e7d9dd787870f315957e1e9f")
+
+
+def test_an_unpinned_model_says_so():
+    assert InjectionClassifier("someone/other-model", _loader=lambda: None).describe == (
+        "someone/other-model@unpinned")

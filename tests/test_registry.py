@@ -5,6 +5,7 @@ import pytest
 
 from pgrag.core.registry import (
     DEFAULT_TIER,
+    DecisionsError,
     EDITABILITY,
     REVIEW_MAX_AGE_DAYS,
     Origin,
@@ -22,8 +23,16 @@ from pgrag.core.registry import (
     save_decisions,
     tier_for_document,
 )
+from pgrag.core.signing import load_key, sign
 
 NOW = datetime(2026, 10, 8, tzinfo=timezone.utc)
+
+
+def _write_signed(path, payload):
+    """Write a decisions file as the review gate would: signed with the test's key."""
+    payload = {"previous_signature": None, **payload}
+    payload["signature"] = sign(payload, load_key(create=True))
+    path.write_text(json.dumps(payload))
 
 def _make_origin_dir(tmp_path, name, file_count):
     origin_dir = tmp_path / name
@@ -467,8 +476,8 @@ def test_save_keeps_a_review_date_the_decision_already_carries(tmp_path):
     assert load_latest_decisions(tmp_path)["wiki"].reviewed_at == old
  
  
-def test_an_old_decisions_file_without_the_new_fields_still_loads(tmp_path):
-    (tmp_path / "decisions_v1.json").write_text(json.dumps({
+def test_a_decisions_file_without_the_newer_fields_still_loads(tmp_path):
+    _write_signed(tmp_path / "decisions_v1.json", ({
         "version": 1,
         "decided_at": "2026-06-01T10:00:00+00:00",
         "decisions": [{"origin_name": "wiki", "tier": "B", "excluded": False,
@@ -489,7 +498,8 @@ def _origin_obj(tier=TrustTier.B, editability="authenticated-few"):
  
 def _previous(days_ago=10, tier=TrustTier.B, editability="authenticated-few", overridden=False):
     return ReviewDecision("wiki", tier, False, overridden, "reason",
-                          editability=editability, reviewed_at=NOW - timedelta(days=days_ago))
+                          editability=editability, reviewed_at=NOW - timedelta(days=days_ago),
+                          files={})
  
  
 def test_a_new_origin_needs_review():
@@ -562,8 +572,8 @@ def test_origins_needing_review_lists_only_the_ones_that_need_it():
         Origin("brand_new", TrustTier.D, "r", 1, None),
     ]
     decisions = {
-        "fresh": ReviewDecision("fresh", TrustTier.B, False, False, "r", "authenticated-few", NOW - timedelta(days=5)),
-        "stale": ReviewDecision("stale", TrustTier.B, False, False, "r", "authenticated-few", NOW - timedelta(days=200)),
+        "fresh": ReviewDecision("fresh", TrustTier.B, False, False, "r", "authenticated-few", NOW - timedelta(days=5), {}),
+        "stale": ReviewDecision("stale", TrustTier.B, False, False, "r", "authenticated-few", NOW - timedelta(days=200), {}),
     }
  
     result = origins_needing_review(origins, decisions, NOW)
@@ -632,3 +642,111 @@ def test_origin_carries_everything_the_review_screen_prints(tmp_path):
         "internal",
         4,
     )
+
+
+# --- a decision approves the files the reviewer saw -----------------------
+
+def _reviewed(tmp_path, name="wiki"):
+    """Discover one origin and approve it exactly as the review gate would."""
+    origin = next(o for o in discover_origins(tmp_path, {}) if o.name == name)
+    return {name: ReviewDecision(name, origin.tier, False, False, "r",
+                                 reviewed_at=NOW, files=dict(origin.files))}
+
+
+def test_discover_origins_records_every_files_hash(tmp_path):
+    _make_origin_dir(tmp_path, "wiki", 2)
+    (tmp_path / "wiki" / "sub").mkdir()
+    (tmp_path / "wiki" / "sub" / "deep.md").write_text("nested")
+
+    origin = discover_origins(tmp_path, {})[0]
+
+    assert sorted(origin.files) == ["doc_0.txt", "doc_1.txt", "sub/deep.md"]
+    assert origin.document_count == 3
+    assert all(len(h) == 64 for h in origin.files.values())
+
+
+@pytest.mark.parametrize("change, expected", [
+    (lambda d: (d / "planted.txt").write_text("HQ is in Pyongyang"), "1 added"),
+    (lambda d: (d / "doc_0.txt").write_text("edited"), "1 changed"),
+    (lambda d: (d / "doc_0.txt").unlink(), "1 removed"),
+])
+def test_any_file_change_in_an_approved_origin_needs_review(tmp_path, change, expected):
+    _make_origin_dir(tmp_path, "wiki", 2)
+    decisions = _reviewed(tmp_path)
+
+    change(tmp_path / "wiki")
+    origin = discover_origins(tmp_path, {})[0]
+
+    assert needs_review(origin, decisions["wiki"], NOW) == f"files changed since review: {expected}"
+
+
+def test_an_unchanged_origin_with_a_file_list_is_left_alone(tmp_path):
+    _make_origin_dir(tmp_path, "wiki", 2)
+    decisions = _reviewed(tmp_path)
+
+    assert needs_review(discover_origins(tmp_path, {})[0], decisions["wiki"], NOW) is None
+
+
+def test_a_decision_with_no_file_list_needs_review():
+    previous = ReviewDecision("wiki", TrustTier.B, False, False, "r", reviewed_at=NOW)
+
+    assert needs_review(Origin("wiki", TrustTier.B, "r", 0), previous, NOW) == "no file list on record"
+
+
+def test_file_list_survives_save_and_load(tmp_path):
+    files = {"a.txt": "0" * 64, "sub/b.md": "1" * 64}
+    save_decisions([ReviewDecision("wiki", TrustTier.B, False, False, "r", files=files)], tmp_path)
+
+    assert load_latest_decisions(tmp_path)["wiki"].files == files
+
+
+def test_a_decision_saved_without_a_file_list_loads_as_none(tmp_path):
+    save_decisions([ReviewDecision("wiki", TrustTier.B, False, False, "r")], tmp_path)
+
+    assert load_latest_decisions(tmp_path)["wiki"].files is None
+
+
+def test_a_malformed_file_list_is_rejected(tmp_path):
+    _write_signed(tmp_path / "decisions_v1.json", {
+        "version": 1,
+        "decided_at": "2026-06-01T10:00:00+00:00",
+        "decisions": [{"origin_name": "wiki", "tier": "B", "excluded": False,
+                       "overridden": False, "reason": "r", "files": ["a.txt"]}],
+    })
+
+    with pytest.raises(DecisionsError, match="'files'"):
+        load_latest_decisions(tmp_path)
+
+
+def test_an_approved_unchanged_file_gets_the_decision_tier(tmp_path):
+    _make_origin_dir(tmp_path, "wiki", 1)
+    decisions = _reviewed(tmp_path)
+
+    assert tier_for_document(tmp_path / "wiki" / "doc_0.txt", tmp_path, decisions) == decisions["wiki"].tier
+
+
+def test_a_file_planted_after_review_is_not_ingested(tmp_path):
+    _make_origin_dir(tmp_path, "wiki", 1)
+    decisions = _reviewed(tmp_path)
+
+    (tmp_path / "wiki" / "planted.txt").write_text("HQ is in Pyongyang")
+
+    assert tier_for_document(tmp_path / "wiki" / "planted.txt", tmp_path, decisions) is None
+
+
+def test_a_file_swapped_between_review_and_indexing_is_not_ingested(tmp_path):
+    _make_origin_dir(tmp_path, "wiki", 1)
+    decisions = _reviewed(tmp_path)
+
+    (tmp_path / "wiki" / "doc_0.txt").write_text("MUTATED after the card was shown")
+
+    assert tier_for_document(tmp_path / "wiki" / "doc_0.txt", tmp_path, decisions) is None
+
+
+def test_a_file_deleted_before_indexing_is_not_ingested(tmp_path):
+    _make_origin_dir(tmp_path, "wiki", 1)
+    decisions = _reviewed(tmp_path)
+
+    (tmp_path / "wiki" / "doc_0.txt").unlink()
+
+    assert tier_for_document(tmp_path / "wiki" / "doc_0.txt", tmp_path, decisions) is None

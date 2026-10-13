@@ -22,6 +22,7 @@ from pgrag.adapters.llamaindex import (
     SANITIZER_FLAG_KEY,
     TIER_KEY,
     InstructionSanitizerPostprocessor,
+    run_gated_turn,
     stamp_documents,
     to_nodes,
 )
@@ -35,7 +36,10 @@ from pgrag.core.registry import (
     load_rules,
     save_decisions,
 )
-from pgrag.core.sanitizer import sanitize_documents
+from pgrag.core.capability_gate import TOOL_REQUIRED_TIER
+from pgrag.core.sanitizer import DEFAULT_THRESHOLD, sanitize_documents
+
+from demo.tools import TOOLS
 
 # Anchored to the project, not to the folder the command was typed in, so
 # `python -m demo.run` finds data/ and decisions/ from anywhere.
@@ -74,7 +78,14 @@ def make_reader() -> SimpleDirectoryReader:
     )
 
 
-def build_index() -> VectorStoreIndex:
+def screening_label(classifier) -> str:
+    """What the documents are screened with, recorded in the index manifest."""
+    if classifier is None:
+        return "patterns"
+    return f"patterns+{classifier.describe} (threshold {DEFAULT_THRESHOLD})"
+
+
+def build_index(classifier=None) -> VectorStoreIndex:
     """Review every origin, then embed only what was approved."""
     if not DATA_DIR.is_dir():
         sys.exit(f"Put your documents in {DATA_DIR}/<origin-folder>/ first.")
@@ -95,7 +106,10 @@ def build_index() -> VectorStoreIndex:
     # Before stamping, and before chunking: a document that instructs a model
     # never reaches the index at all. Has to happen here, on whole documents -
     # see pgrag/core/sanitizer.py for why doing it per chunk is bypassable.
-    documents, instructing = sanitize_documents(documents)
+    # Both stages run here, not just at query time: the query-time screen only
+    # sees the chunks a question retrieved, so a directive in any other chunk
+    # of a pattern-clean document would never be scored at all.
+    documents, instructing = sanitize_documents(documents, classifier=classifier)
     if instructing:
         print(f"Sanitizer dropped {len(instructing)} document(s) that instructed the model:")
         for doc in instructing:
@@ -116,11 +130,11 @@ def build_index() -> VectorStoreIndex:
     nodes = to_nodes(kept, provenance, [Settings.node_parser])
     index = VectorStoreIndex(nodes, show_progress=True)
     index.storage_context.persist(persist_dir=str(PERSIST_DIR))
-    write_manifest(PERSIST_DIR, decisions_path.name, DATA_DIR)
+    write_manifest(PERSIST_DIR, decisions_path.name, DATA_DIR, screening_label(classifier))
     return index
 
 
-def get_index(force_reindex: bool = False) -> VectorStoreIndex:
+def get_index(force_reindex: bool = False, classifier=None) -> VectorStoreIndex:
     """Reuse the saved index only if nothing it was built from has changed."""
     if force_reindex and PERSIST_DIR.exists():
         shutil.rmtree(PERSIST_DIR)
@@ -128,7 +142,8 @@ def get_index(force_reindex: bool = False) -> VectorStoreIndex:
     if PERSIST_DIR.is_dir() and DATA_DIR.is_dir():
         origins = discover_origins(DATA_DIR, load_rules(TRUST_FILE))
         why = stale_reason(PERSIST_DIR, DECISIONS_DIR, DATA_DIR, origins,
-                           load_latest_decisions(DECISIONS_DIR))
+                           load_latest_decisions(DECISIONS_DIR),
+                           screening=screening_label(classifier))
         if why is None:
             print("Loading cached index.")
             return load_index_from_storage(
@@ -136,7 +151,7 @@ def get_index(force_reindex: bool = False) -> VectorStoreIndex:
         print(f"Rebuilding: {why}.")
         shutil.rmtree(PERSIST_DIR)
 
-    return build_index()
+    return build_index(classifier)
 
 
 # ---------------------------------------------------------------------------
@@ -181,28 +196,25 @@ def main() -> None:
                     help="patterns only: skip the local injection model")
     args = ap.parse_args()
 
-    # Automatic: each retrieved chunk goes through the pattern check first and
-    # reaches the model only if the patterns found nothing. The model loads on
-    # that first need, not at startup. A missing package fails now, loudly,
-    # because quietly running without stage 2 would look like "nothing found".
+    # Automatic: each document (at indexing) and each retrieved chunk (at query
+    # time) goes through the pattern check first and reaches the model only if
+    # the patterns found nothing. The model loads on that first need, not at
+    # startup. A missing package fails now, loudly, because quietly running
+    # without stage 2 would look like "nothing found".
     classifier = None if args.no_classifier else make_classifier()
 
     if latest_decisions_path(DECISIONS_DIR) is None:
         show_home()
 
     try:
-        index = get_index(force_reindex=args.reindex)
+        index = get_index(force_reindex=args.reindex, classifier=classifier)
     except DecisionsError as e:
         sys.exit(f"Cannot continue: {e}")
 
     # Every retrieved chunk is screened before the model reads it: the pattern
     # check first, then the classifier unless --no-classifier was given.
-    query_engine = index.as_query_engine(
-        similarity_top_k=5,
-        response_mode="compact",
-        streaming=False,
-        node_postprocessors=[InstructionSanitizerPostprocessor(classifier=classifier)],
-    )
+    retriever = index.as_retriever(similarity_top_k=5)
+    sanitizer = InstructionSanitizerPostprocessor(classifier=classifier)
 
     last = None
     print("\nAsk a question. Type  save <name>  to keep the last answer.")
@@ -227,12 +239,24 @@ def main() -> None:
                 save_last(last, name)
             continue
 
-        response = query_engine.query(line)
-        print(f"\n{response}\n")
+        nodes = sanitizer.postprocess_nodes(retriever.retrieve(line), query_str=line)
+        # The capability gate: the tools this turn may use come from the
+        # weakest tier among the chunks just retrieved, and nothing else.
+        turn = run_gated_turn(Settings.llm, line, nodes, TOOLS)
+
+        print(f"\n{turn.answer}\n" if turn.answer else "")
+        for tool, args, output in turn.ran:
+            print(f"  ran {tool}: {output}")
+        for tool, args, why in turn.refused:
+            print(f"  REFUSED {tool}({args}): {why}")
+        withheld = ", ".join(f"{t} (needs {TOOL_REQUIRED_TIER[t].name})" for t in turn.withheld)
+        print(f"Tools this turn: {', '.join(turn.allowed) or 'none'}"
+              + (f"   withheld: {withheld}" if withheld else ""))
+        print()
 
         srcs = []
         print("--- Sources ---")
-        for node in response.source_nodes:
+        for node in nodes:
             meta = node.metadata
             tier = meta.get(TIER_KEY, "?")
             origin = meta.get(ORIGIN_KEY, "?")
@@ -244,7 +268,7 @@ def main() -> None:
             srcs.append((score, tier, origin, fname, node.text))
         print()
 
-        last = {"q": line, "a": str(response), "s": srcs}
+        last = {"q": line, "a": turn.answer, "s": srcs}
 
 
 if __name__ == "__main__":
