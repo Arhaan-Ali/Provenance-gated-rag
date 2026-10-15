@@ -9,7 +9,7 @@ The demo reviews document origins, screens whole documents before chunking, and 
 ## The boundary
 
 <p align="center">
-  <img src="./assets/readme/pipeline.svg" width="100%" alt="Pipeline: review origins, screen complete documents, stamp and re-stamp provenance, retrieve and screen chunks, then gate tool access by the weakest tier">
+  <img src="./assets/readme/pipeline.svg" width="100%" alt="Pipeline: review origins, screen complete documents, stamp and re-stamp provenance, retrieve and screen chunks and more information, then gate tool access by the weakest tier">
 </p>
 
 The two checks answer different questions: **is this document eligible to enter the index?** and **what may this turn do with the sources it retrieved?** Unknown or untraceable provenance fails closed to tier `D`.
