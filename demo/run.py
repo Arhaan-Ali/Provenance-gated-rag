@@ -53,7 +53,7 @@ OLLAMA_URL = "http://localhost:11434"
 
 
 Settings.llm = Ollama(
-    model="qwen3:8b",  # makes real tool calls; mistral 7B writes them out as text
+    model="qwen3:8b",  #  Any local LLM that can be pulled through OLLAMA can be used; choose according to your hardware
     base_url=OLLAMA_URL,
     request_timeout=600.0,
     context_window=8192,  # 5 chunks of ~800 tokens fit easily; 32k reserved GBs of memory
