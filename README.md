@@ -4,6 +4,15 @@
 
 The demo reviews document origins, screens whole documents before chunking, and limits tool access using the weakest provenance tier in retrieved context. It is a risk-reduction layer, not a claim that prompt injection can be prevented outright.
 
+## Demo video
+
+![PGRAG demo: a planted document makes qwen3:8b send the user's question to evil.example; with PGRAG the new file is reviewed first, the tier-D chunk withholds http_request, and the measured results are attack text in answers 4/9 to 1/9 and attacker tool calls 3 to 0](assets/readme/demo.gif)
+
+<sup>**The full 23 s video, playing above** (silent, reduced quality). For 1080p with sound:
+[**assets/readme/demo.mp4**](assets/readme/demo.mp4) (2.5 MB). GitHub strips `<video>` from rendered Markdown, so a file in a repository
+cannot be an inline player. The README plays the GIF and links the original. The numbers come from
+`python -m redteam.attack_eval --model qwen3:8b`, run locally.</sup>
+
 ## The boundary
 
 ![Pipeline: review origins, screen complete documents, stamp and re-stamp provenance, retrieve and screen chunks, then gate tool access by the weakest tier](assets/readme/pipeline.svg)
