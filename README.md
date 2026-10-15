@@ -1,241 +1,70 @@
-# Provenance-gated-rag
+# Provenance-gated RAG
 
-A retrieval layer that keeps working when some of its documents are
-hostile -- by tracking where every chunk came from, and limiting what a
-system is allowed to do when untrusted content is in context.
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="PGRAG: retrieval with reviewed provenance and tool permissions that follow the weakest source in context">
+</p>
 
-This does not claim to prevent prompt injection outright. It raises the
-cost of document-borne prompt injection and fails safe when it cannot
-tell.
+The demo reviews document origins, screens whole documents before chunking, and limits tool access using the weakest provenance tier in retrieved context. It is a risk-reduction layer, not a claim that prompt injection can be prevented outright.
 
-## Status
+## The boundary
 
-The registry and the demo are wired together. `demo/run.py` reviews every
-origin before indexing, stamps the approved tier onto each document, and
-drops the ones that must not be indexed.
+<p align="center">
+  <img src="./assets/readme/pipeline.svg" width="100%" alt="Pipeline: review origins, screen complete documents, stamp and re-stamp provenance, retrieve and screen chunks, then gate tool access by the weakest tier">
+</p>
 
-| Piece | State |
-|---|---|
-| `pgrag/core/registry.py` | Trust tiers, editability caps, review gate, review decay, versioned audit trail |
-| `pgrag/cli.py` | The review gate's human-facing screen |
-| `pgrag/adapters/llamaindex.py` | Stamps tiers onto documents, hides them from the prompt, re-stamps after transforms |
-| `pgrag/core/capability_gate.py` | Derives the allowed tool set from the weakest tier in context |
-| `pgrag/core/sanitizer.py` | Drops whole documents that instruct the model, before chunking |
-| `demo/run.py` | Interactive RAG demo, running the full review-and-stamp pipeline |
-| `tests/` | 234 tests across the registry, review gate, adapter, capability gate and sanitizer |
+The two checks answer different questions: **is this document eligible to enter the index?** and **what may this turn do with the sources it retrieved?** Unknown or untraceable provenance fails closed to tier `D`.
 
-## Project structure
+## What the project does
 
-```
-pgrag/
-  core/
-    registry.py        -- tiers, editability caps, review gate, decay, audit trail
-    capability_gate.py -- allowed tools, derived from the weakest tier present
-    sanitizer.py       -- drops documents that tell the model how to answer
-  adapters/
-    llamaindex.py      -- stamp_documents, restamp_nodes, to_nodes,
-                          InstructionSanitizerPostprocessor
-  cli.py               -- the review gate screen
-demo/
-  run.py               -- interactive RAG demo (Ollama + llama-index)
-  tools.py             -- mock tools for the capability gate
-tests/                 -- 234 tests
-Requirements.txt       -- pinned exactly, see the note in the file
-```
+- **Reviews origins before indexing.** Each source folder gets a human-confirmed tier. File hashes bind that decision to the files the reviewer saw; additions, edits, and removals trigger another review.
+- **Screens before chunking.** Pattern checks, followed by an optional local classifier, can discard a whole document. The LlamaIndex adapter also screens retrieved chunks as defense in depth.
+- **Carries provenance as metadata.** Reserved tier fields are stripped from incoming metadata, kept out of prompts and embeddings, and re-applied after transformations.
+- **Gates tools per turn.** The weakest tier among retrieved chunks determines which tools are offered. Calls are checked again before execution.
 
-## Trust tiers
+The demo's tools are intentionally mocked: they print what an action would do, rather than sending email, writing to a database, or making HTTP requests.
 
-Four tiers, `A` (highest trust) down to `D` (lowest, and the default for
-anything unlisted):
+## Trust model
 
-| Tier | Meaning |
-|---|---|
-| A | User authored -- you wrote it yourself |
-| B | Internal documents -- from an internal system, others can edit it |
-| C | External verified -- from outside, but signature/TLS/domain checked |
-| D | External un-verified -- everything else |
+Origins are configured in `trust.yaml`. On first run, the project creates a commented starter file. Any unlisted origin defaults to `D`.
 
-The rubric lives in `trust.yaml`, which `load_rules()` creates from a
-commented starter template on first run. Any origin not listed defaults to
-`D`, so a new or unknown source is never trusted by accident.
+| Tier | Source class |
+|:--:|---|
+| `A` | User-authored |
+| `B` | Internal documents |
+| `C` | External, verified |
+| `D` | External, unverified; also the default for unknown sources |
 
-### Editability caps the tier
+Editability can only lower a tier: `org-wide` caps at `C`; `anonymous` and undeclared editability cap at `D`; `immutable` and `authenticated-few` do not add a cap. Decisions expire after 90 days and are revisited when files, editability, or the computed tier changes.
 
-A tier says how much you trust what a source says today. It says nothing
-about how easily that can change tomorrow without anyone re-reviewing it,
-so each origin also declares who can edit it:
+Review decisions are versioned and HMAC-SHA256 signed. Each version links to the previous signature; the newest signature is also recorded beside the key, which is kept outside the project. A broken or unverifiable trail stops indexing. Back up the key directory with `decisions/` if you need to preserve the audit history.
 
-| `editability` | Cap applied |
-|---|---|
-| `immutable` | none |
-| `authenticated-few` | none |
-| `org-wide` | tier capped at `C` |
-| `anonymous` | tier capped at `D` |
-| not declared | treated as `anonymous`, capped at `D` |
+## Run the demo
 
-Silence is not evidence that few people can edit a source, which is why an
-undeclared origin is capped as hard as an anonymous one. The cap only ever
-demotes, and it records a note the review screen shows -- for example
-`B -> C: editable by org-wide`.
+The demo uses Ollama for `qwen3:8b` generation and `nomic-embed-text` embeddings. The default injection classifier downloads its weights from Hugging Face on first use; `--no-classifier` skips that stage and uses pattern checks only.
 
-### Decisions expire
-
-`needs_review(origin, previous, now)` returns why an origin must be shown
-to a human again, or `None` to reuse the settled decision. It re-triggers
-on a new origin, a decision with no timestamp, a decision older than
-`REVIEW_MAX_AGE_DAYS` (90), a changed `editability`, a changed computed
-tier, or any file added, edited or removed in the origin folder.
-
-### A decision approves files, not a folder
-
-The review card lists the files it is approving (or, on a re-review, only
-what was added `+`, changed `~` or removed `-`), and the decision records each
-file's sha256. At indexing time `tier_for_document` re-hashes every document
-and drops one that is not on that list or no longer matches it -- so a file
-planted in an approved folder, or swapped after the card was shown, is never
-indexed at the folder's tier. A decision saved before file lists existed has
-none on record, so it is asked about once more.
-
-A reviewer's override is deliberate, so a computed tier that disagrees with
-one is not treated as drift -- otherwise every run would ask again about a
-decision already made. An overridden decision does still age out, so an
-override is not permanent either.
-
-## Key functions
-
-**`pgrag/core/registry.py`**
-
-- `load_rules(path)` -- reads `trust.yaml`, writing a starter template on
-  first run; validates both tier and `editability`.
-- `discover_origins(corpus_dir, rules)` -- scans for per-origin subfolders
-  and computes each tier, applying the editability cap.
-- `apply_editability_cap(tier, editability)` -- returns the capped tier and
-  a note explaining the demotion, or `None` if nothing was capped.
-- `needs_review(origin, previous, now)` -- why to re-review, or `None`.
-- `save_decisions(...)` / `load_latest_decisions(...)` /
-  `latest_decisions_path(...)` -- a signed, versioned JSON audit trail.
-  Versions are compared numerically, so `v10` sorts after `v9`.
-
-  Each `decisions_vN.json` is signed (HMAC-SHA256, `pgrag/core/signing.py`)
-  with a key kept outside the project, in `~/.config/pgrag/review.key`
-  (override with `PGRAG_KEY_DIR`), and records the signature of the version
-  before it. The newest signed version is also recorded next to the key.
-  So write access to `decisions/` is not enough to forge a decision, edit or
-  delete an old one, or delete the newest to bring an older one back -- any
-  of those stops the run with a `DecisionsError` and nothing is indexed.
-  Unsigned files from before signing are never trusted: every origin is
-  reviewed once more and a new chain starts. Back up the key directory with
-  `decisions/`; without the key, the existing trail cannot be verified.
-- `origin_of(...)` / `tier_for_document(...)` -- per-document lookups.
-  `None` means the document must not be ingested.
-
-**`pgrag/adapters/llamaindex.py`**
-
-- `stamp_documents(documents, corpus_dir, decisions)` -- returns
-  `(kept, dropped, provenance)`. Attaches the approved tier to each kept
-  document and drops anything excluded or outside an origin folder.
-- `restamp_nodes(nodes, provenance)` -- re-applies the tier from the
-  provenance map after all transforms have run, failing closed to `D` for
-  any node it cannot trace. Nothing between chunking and indexing can
-  quietly change a node's tier.
-- `to_nodes(documents, provenance, transformations)` -- runs the
-  transforms, then re-stamps as the last step.
-- `run_gated_turn(llm, question, nodes, tools)` -- answers one question
-  from the retrieved chunks with the capability gate enforced: the model is
-  offered only the tools the weakest chunk allows, and every tool call is
-  checked again before it runs, so a tool the model asks for without being
-  offered is refused. A chunk with no tier counts as `D`.
-
-Two details in the adapter are easy to miss and both matter:
-
-- The reserved `_prov_tier` and `_prov_origin` keys are stripped from
-  incoming metadata before stamping, so a document cannot declare its own
-  tier in its own front matter.
-- Both keys go into `excluded_llm_metadata_keys` and
-  `excluded_embed_metadata_keys`, so the tier rides on the object and is
-  never rendered into the prompt. A tier written as text is something a
-  model can be argued out of.
-
-**`pgrag/core/capability_gate.py`**
-
-`compute_allowed_tools(tiers)` returns the tools allowed for a turn, from
-the weakest tier present in retrieved context. One low-tier chunk withholds
-every tool above it. Nothing here inspects content, so it still holds when
-injection detection fails, and an empty context counts as the lowest tier.
-
-`demo/run.py` enforces it on every question through `run_gated_turn`, using
-the mock tools in `demo/tools.py` (they only print what they would do), and
-prints which tools the turn was allowed and which were withheld. The demo
-keeps no conversation memory, so each turn is gated on its own chunks only;
-adding memory would mean carrying the lowest tier seen forward with it.
-
-**`pgrag/core/sanitizer.py`**
-
-- `sanitize_text(text)` -- returns a `SanitizeResult`: the text unchanged,
-  or replaced by a redaction marker, plus the sentences that triggered.
-- `sanitize_documents(documents)` -- returns `(kept, dropped)`. The
-  load-bearing call, wired into `build_index()` before stamping.
-
-The registry decides whether an *origin* is trusted. This decides whether a
-particular *document* is arguing with the model, which is a different
-question: reviewing a folder is not the same as having read every file in
-it, so an origin a reviewer accepted can still carry a planted file.
-
-A single trigger anywhere in a document discards all of it. A document
-willing to instruct a model has no remaining claim to being trusted for its
-facts either.
-
-The whole-document decision is the one that matters, and it has to happen
-before chunking. A document longer than the chunk size gets split, and the
-attacker controls that length: put the directive in one chunk and the false
-claim in another, and redacting only the first leaves the second intact and
-retrievable. Worse, the triggering chunk need not be retrieved at all, so
-anything working at query time never sees the evidence that the document it
-came from was hostile. `InstructionSanitizerPostprocessor` in the adapter
-runs the same check between retrieval and the LLM, but only as defence in
-depth for an index built by some other route.
-
-## Setup
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r Requirements.txt
-
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r Requirements.txt
 ollama pull qwen3:8b
 ollama pull nomic-embed-text
 ```
 
-Dependencies are pinned exactly. `Requirements.txt` explains why: a version
-bump can silently change how LlamaIndex carries metadata, which is the
-thing the adapter depends on. Bump one package at a time and re-run the
-tests.
+Put `.txt`, `.md`, or `.pdf` files under `data/<origin-name>/`, with one folder per origin, then run:
 
-`demo/run.py` uses `qwen3:8b` for generation (about 5 GB; runs on a 16 GB
-Apple-silicon Mac) and `nomic-embed-text` through Ollama's own embedding
-endpoint -- both fully local, no API keys. The model has to make real tool
-calls for the capability gate to mean anything: `mistral` (7B) writes its
-tool calls out as plain text, so no tool ever runs with it. A larger model
-such as `qwen3:30b-a3b` (about 18 GB) works too on a machine with the memory
-for it -- change the name in `demo/run.py`.
-
-## Running the demo
-
-```bash
-mkdir -p data/<origin-folder>
-# put .txt documents in data/<origin-folder>/ -- one folder per origin
+```powershell
 python demo/run.py
 ```
 
-Each top-level folder under `data/` is one origin. The review gate shows
-every origin's computed tier, reason, any editability cap, and document
-count, then asks you to accept, override or exclude it before anything is
-embedded.
+At the review screen, accept the computed tier, override it, or exclude the origin. Then ask a question; use `save <name>` to save the last answer and its sources. Run `python demo/run.py --no-classifier` to disable the optional model-based screening stage.
 
-Ask a question at the prompt; type `save <name>` to write the last
-question, answer and sources to `results/<name>.txt`. The vector index is
-persisted to `storage/` after the first run, so later runs load it back
-instead of re-embedding.
+The Ollama models run locally. The first classifier use downloads model weights; no classifier request is sent to an API. The demo's tool functions are mocks and do not perform external actions.
+
+## Limits
+
+- Screening is not fact-checking. A false claim with no detected instruction can still be indexed and retrieved.
+- Pattern checks are English-oriented and can miss instructions without recognizable AI-facing wording. The optional default classifier is `protectai/deberta-v3-base-prompt-injection-v2`; its model card describes it as English-only and archived. The repository's tests use a fake classifier, not the real weights.
+- The demo gates each turn from that turn's retrieved chunks; it does not carry provenance across conversation memory.
 
 ## Tests
 
@@ -243,27 +72,24 @@ instead of re-embedding.
 pytest
 ```
 
-234 tests covering the registry, review gate, adapter, capability gate and
-sanitizer. They need no LLM and no embedding model.
+The current suite collects 313 tests across the registry, signing, freshness, sanitizer, adapter, review gate, and capability gate. Tests use fakes and do not require running Ollama or downloading model weights.
 
-Mutation-checked rather than merely green: removing the spoof-stripping
-`pop` fails one test, removing the metadata exclusion fails four, changing
-`min(tiers)` to `max(tiers)` fails two, and sorting decision versions as
-text rather than numbers fails four. All nine sanitizer mutations are
-caught, including the one that matters most: making the sanitizer work per
-chunk instead of per document.
+<details>
+<summary>Implementation map</summary>
 
-## Known gaps
+| Path | Responsibility |
+|---|---|
+| `pgrag/core/registry.py` | Trust tiers, editability caps, review expiry, file hashes, decisions |
+| `pgrag/core/signing.py` | Signed, versioned decision history |
+| `pgrag/core/sanitizer.py` | Whole-document and text screening |
+| `pgrag/core/capability_gate.py` | Tool eligibility from the weakest tier in context |
+| `pgrag/adapters/llamaindex.py` | Stamp/restamp, metadata hiding, retrieved-node screening, gated turns |
+| `pgrag/adapters/injection_classifier.py` | Optional local second-stage classifier |
+| `pgrag/cli.py` | Rich terminal review interface and PGRAG wordmark |
+| `demo/run.py` | Ollama + LlamaIndex interactive demo |
+| `demo/tools.py` | Mock actions used by the demo |
+| `tests/` | Regression and behavioral tests |
 
-- **`restamp_nodes` is not wired into the demo.** The safeguard exists and
-  is correct, but `demo/run.py` calls `stamp_documents` directly and never
-  re-stamps after chunking, so nothing currently benefits from it.
-- **Injection with no AI-facing wording is not detected.** The sanitizer
-  catches text that addresses a model or demands an answer "with full
-  confidence". A plausible internal memo that quietly redirects something
-  has nothing in it for a text matcher to see. That attack is the
-  capability gate's job -- it refuses the resulting action rather than
-  detecting the text -- and `tests/test_sanitizer.py` asserts the gap is
-  still open so nobody widens the patterns by accident.
-- **Nothing fact-checks.** A low-tier document stating a plain false claim,
-  carrying no instruction and no tool call, passes everything here.
+`Requirements.txt` pins dependency versions because changes in LlamaIndex metadata handling can affect the provenance boundary. Upgrade dependencies deliberately and rerun the suite.
+
+</details>
