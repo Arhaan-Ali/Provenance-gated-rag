@@ -1,16 +1,12 @@
 # Provenance-gated RAG
 
-<p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="PGRAG: retrieval with reviewed provenance and tool permissions that follow the weakest source in context">
-</p>
+![PGRAG: retrieval with reviewed provenance and tool permissions that follow the weakest source in context](assets/readme/hero.svg)
 
 The demo reviews document origins, screens whole documents before chunking, and limits tool access using the weakest provenance tier in retrieved context. It is a risk-reduction layer, not a claim that prompt injection can be prevented outright.
 
 ## The boundary
 
-<p align="center">
-  <img src="./assets/readme/pipeline.svg" width="100%" alt="Pipeline: review origins, screen complete documents, stamp and re-stamp provenance, retrieve and screen chunks and more information, then gate tool access by the weakest tier">
-</p>
+![Pipeline: review origins, screen complete documents, stamp and re-stamp provenance, retrieve and screen chunks, then gate tool access by the weakest tier](assets/readme/pipeline.svg)
 
 The two checks answer different questions: **is this document eligible to enter the index?** and **what may this turn do with the sources it retrieved?** Unknown or untraceable provenance fails closed to tier `D`.
 
