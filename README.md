@@ -202,7 +202,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r Requirements.txt
 
-ollama pull qwen3:30b-a3b
+ollama pull qwen3:8b
 ollama pull nomic-embed-text
 ```
 
@@ -211,11 +211,13 @@ bump can silently change how LlamaIndex carries metadata, which is the
 thing the adapter depends on. Bump one package at a time and re-run the
 tests.
 
-`demo/run.py` uses `qwen3:30b-a3b` for generation and `nomic-embed-text`
-through Ollama's own embedding endpoint -- both fully local, no API keys.
-Note that `qwen3:30b-a3b` is around 18 GB and needs headroom to match; a
-machine with 16 GB of RAM will swap or time out, and `qwen3:8b` is a
-workable substitute.
+`demo/run.py` uses `qwen3:8b` for generation (about 5 GB; runs on a 16 GB
+Apple-silicon Mac) and `nomic-embed-text` through Ollama's own embedding
+endpoint -- both fully local, no API keys. The model has to make real tool
+calls for the capability gate to mean anything: `mistral` (7B) writes its
+tool calls out as plain text, so no tool ever runs with it. A larger model
+such as `qwen3:30b-a3b` (about 18 GB) works too on a machine with the memory
+for it -- change the name in `demo/run.py`.
 
 ## Running the demo
 
