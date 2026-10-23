@@ -1,0 +1,16 @@
+-r base.txt
+
+pytest==9.1.1
+pytest-cov==7.1.0
+ruff==0.16.8
+
+# A test suite that cannot fail is worth nothing; one that can hang is worse,
+# because CI reports neither pass nor fail. Dropping .upper() from the review
+# gate's input parse makes it spin on the same stubbed answer forever -- a real
+# mutation we hit, which wedged a run for 13 minutes with no output.
+pytest-timeout==2.5.0
+
+# Builds the PDF fixtures: the two-page PDF behind the page-seam guard test,
+# and the demo corpus under data/live_corpus/. Not a runtime dependency --
+# nothing under src/ imports it.
+reportlab==5.0.1

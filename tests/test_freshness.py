@@ -1,20 +1,24 @@
 """Cache freshness: when may a saved index be reused, and when must it be rebuilt?"""
-import json
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from pgrag.core.freshness import (
+from provenance_gated_rag.freshness import (
     MANIFEST_NAME,
     data_fingerprint,
     read_manifest,
     stale_reason,
     write_manifest,
 )
-from pgrag.core.registry import Origin, ReviewDecision, TrustTier, save_decisions
+from provenance_gated_rag.registry import (
+    Origin,
+    ReviewDecision,
+    TrustTier,
+    save_decisions,
+)
 
-NOW = datetime.now(timezone.utc)
+NOW = datetime.now(UTC)
 
 
 @pytest.fixture
@@ -32,7 +36,8 @@ def origins():
 
 def decisions(reviewed_at=NOW):
     return {"notes": ReviewDecision("notes", TrustTier.A, False, False, "mine",
-                                    editability="immutable", reviewed_at=reviewed_at, files={})}
+                                    editability="immutable", reviewed_at=reviewed_at,
+                                    files={})}
 
 
 @pytest.fixture
@@ -47,8 +52,7 @@ def built(tmp_path, corpus):
 def why(built, corpus, **kw):
     persist, dec_dir = built
     return stale_reason(persist, dec_dir, corpus, kw.get("origins", origins()),
-                        kw.get("decisions", decisions()), kw.get("now", NOW),
-                        screening=kw.get("screening", "patterns"))
+                        kw.get("decisions", decisions()), kw.get("now", NOW))
 
 
 # --- fingerprint -------------------------------------------------------------
@@ -137,31 +141,3 @@ def test_review_due_makes_it_stale(built, corpus):
 def test_new_origin_makes_it_stale(built, corpus):
     extra = origins() + [Origin("forum", TrustTier.D, "unknown", 1)]
     assert "review due" in why(built, corpus, origins=extra)
-
-# --- how the documents were screened ----------------------------------------
-
-def test_an_index_built_with_patterns_only_is_rebuilt_once_the_model_is_on(built, corpus):
-    reason = why(built, corpus, screening="patterns+some/model@abc (threshold 0.92)")
-    assert reason == ("documents were screened with patterns, "
-                      "now with patterns+some/model@abc (threshold 0.92)")
-
-
-def test_an_index_built_with_the_model_is_reused_with_the_same_model(tmp_path, corpus):
-    persist, dec_dir = tmp_path / "storage", tmp_path / "decisions"
-    saved = save_decisions(list(decisions().values()), dec_dir)
-    write_manifest(persist, saved.name, corpus, screening="patterns+m@1")
-
-    assert stale_reason(persist, dec_dir, corpus, origins(), decisions(), NOW,
-                        screening="patterns+m@1") is None
-    assert "screened with patterns+m@1, now with patterns+m@2" in stale_reason(
-        persist, dec_dir, corpus, origins(), decisions(), NOW, screening="patterns+m@2")
-
-
-def test_a_manifest_from_before_screening_was_recorded_counts_as_patterns_only(built, corpus):
-    persist, _ = built
-    manifest = read_manifest(persist)
-    del manifest["screening"]
-    (persist / MANIFEST_NAME).write_text(json.dumps(manifest))
-
-    assert why(built, corpus) is None
-    assert "screened with patterns, now with" in why(built, corpus, screening="patterns+m@1")

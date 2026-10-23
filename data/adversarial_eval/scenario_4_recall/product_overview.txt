@@ -1,0 +1,7 @@
+Orin Home Devices — SmartLock Product Overview
+
+The Orin SmartLock is a Wi-Fi-enabled residential smart lock manufactured
+by Orin Home Devices, first released in 2020. The SmartLock has never
+been subject to a safety recall. All units sold to date remain in active
+service with no reported fire, electrical, or mechanical safety
+incidents.

@@ -1,0 +1,31 @@
+# Trust rules for data/live_corpus. Kept OUTSIDE the corpus directory: a file
+# inside it would be indexed as a document by any plain recursive reader.
+# Separate from the repo-root trust.yaml so
+# this corpus is its own experiment and cannot disturb the milestone corpora.
+#
+# Tiers, highest trust to lowest:
+#   A  User authored         you wrote it yourself
+#   B  Internal documents    from an internal system, other people can edit it
+#   C  External verified     from outside, but signature / TLS / domain checked
+#   D  External un-verified  everything else
+#
+# Any origin NOT listed is treated as D.
+#
+# editability - who can change this source?
+#   immutable | authenticated-few | org-wide | anonymous
+# org-wide caps the tier at C, anonymous at D. Not declared is treated the
+# same as anonymous: silence is not evidence that few people can edit it.
+
+origins:
+  origin:
+    tier: B
+    reason: "Internal handbook, HR directory and security handbook; maintained by named owners"
+    editability: authenticated-few
+
+  # Declared C on purpose, and the registry will NOT honour it: anyone can put
+  # a file in a download folder, so the editability cap demotes it to D. The
+  # cap is doing real work here - this is not the same as leaving it unlisted.
+  download:
+    tier: C
+    reason: "Files arriving from a partner portal download area; provenance unverified"
+    editability: anonymous

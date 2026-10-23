@@ -1,18 +1,29 @@
-"""The signed decisions trail: forged, edited, deleted or rolled-back files are refused."""
+"""The signed decisions trail: forged, edited, deleted or rolled-back files are refused.
+
+Ported from the fork's tests/test_signing.py with only the imports changed, so the
+two repositories are held to the same behaviour.
+"""
 import json
 import os
 import stat
 
 import pytest
 
-from pgrag.core.registry import (
+from provenance_gated_rag.registry import (
     DecisionsError,
     ReviewDecision,
     TrustTier,
     load_latest_decisions,
     save_decisions,
 )
-from pgrag.core.signing import KEY_DIR_ENV, KEY_NAME, key_dir, read_head, sign, write_head
+from provenance_gated_rag.signing import (
+    KEY_DIR_ENV,
+    KEY_NAME,
+    key_dir,
+    read_head,
+    sign,
+    write_head,
+)
 
 
 def _decision(tier=TrustTier.B, excluded=False, name="wiki"):
@@ -209,3 +220,78 @@ def test_the_first_signed_save_after_unsigned_files_starts_a_new_chain(tmp_path)
     assert v2.name == "decisions_v2.json"
     assert _read(v2)["previous_signature"] is None
     assert load_latest_decisions(tmp_path)["wiki"].tier == TrustTier.C
+
+
+# --- moving the project folder (not in the fork) ---------------------------
+
+def test_every_file_in_a_chain_carries_the_same_trail_id(tmp_path):
+    v1 = save_decisions([_decision()], tmp_path)
+    v2 = save_decisions([_decision()], tmp_path)
+
+    assert len(_read(v1)["trail_id"]) == 32
+    assert _read(v1)["trail_id"] == _read(v2)["trail_id"]
+
+
+def test_a_moved_folder_still_loads(tmp_path):
+    save_decisions([_decision(TrustTier.C)], tmp_path / "old")
+    (tmp_path / "old").rename(tmp_path / "new")
+
+    assert load_latest_decisions(tmp_path / "new")["wiki"].tier == TrustTier.C
+    assert read_head(tmp_path / "new")["version"] == 1
+
+
+def test_a_rollback_hidden_by_moving_the_folder_is_still_refused(tmp_path):
+    # Path-keyed heads alone missed this: after the move there was no head
+    # for the new path, so the shortened chain looked like a fresh trail.
+    save_decisions([_decision(TrustTier.A)], tmp_path / "old")
+    v2 = save_decisions([_decision(excluded=True)], tmp_path / "old")
+    v2.unlink()
+    (tmp_path / "old").rename(tmp_path / "new")
+
+    with pytest.raises(DecisionsError, match="older decision was put back"):
+        load_latest_decisions(tmp_path / "new")
+
+
+def test_saving_after_a_move_extends_the_same_trail(tmp_path):
+    v1 = save_decisions([_decision()], tmp_path / "old")
+    (tmp_path / "old").rename(tmp_path / "new")
+
+    v2 = save_decisions([_decision(TrustTier.C)], tmp_path / "new")
+
+    assert _read(v2)["previous_signature"] == _read(tmp_path / "new" / v1.name)["signature"]
+    assert _read(v2)["trail_id"] == _read(tmp_path / "new" / v1.name)["trail_id"]
+
+
+def test_the_missing_key_error_says_how_to_recover(tmp_path, monkeypatch, tmp_path_factory):
+    save_decisions([_decision()], tmp_path)
+    monkeypatch.setenv(KEY_DIR_ENV, str(tmp_path_factory.mktemp("elsewhere")))
+
+    with pytest.raises(DecisionsError, match=r"PGRAG_KEY_DIR.*move .* aside"):
+        load_latest_decisions(tmp_path)
+
+
+def test_losing_the_key_and_moving_the_folder_aside_starts_a_new_trail(tmp_path):
+    # The recovery the missing-key error recommends. heads.json still says
+    # v1 was signed here, but with the key gone nothing could check it, so
+    # the empty folder is a fresh start: every origin reviewed again.
+    decisions = tmp_path / "decisions"
+    save_decisions([_decision()], decisions)
+    (key_dir() / KEY_NAME).unlink()
+    decisions.rename(tmp_path / "decisions_old")
+    decisions.mkdir()
+
+    assert load_latest_decisions(decisions) == {}
+    path = save_decisions([_decision(TrustTier.C)], decisions)
+    assert path.name == "decisions_v1.json"
+    assert _read(path)["previous_signature"] is None
+    assert load_latest_decisions(decisions)["wiki"].tier == TrustTier.C
+
+
+def test_deleting_the_files_while_the_key_is_kept_is_still_refused(tmp_path):
+    decisions = tmp_path / "decisions"
+    save_decisions([_decision()], decisions)
+    decisions.rename(tmp_path / "decisions_old")
+    decisions.mkdir()
+
+    with pytest.raises(DecisionsError, match="were deleted"):
+        load_latest_decisions(decisions)
