@@ -1,10 +1,11 @@
-# Runs the test suite on every push and pull request. Ported from the fork.
+# Runs the test suite on every push and pull request.
 #
-# The suite needs no LLM and no embedding model -- retrieval tests use a mock
-# embedding, and the classifier tests use a fake pipeline -- so it runs in a
-# few seconds on a clean runner with nothing but requirements/dev.txt.
-# scripts/verify_milestones.py is the check that needs Ollama; it is run by
-# hand, not here.
+# The suite needs no LLM and no embedding model -- the registry, review gate,
+# adapter and capability gate are all pure logic -- so it runs in about a
+# second on a clean runner with nothing but pip install.
+#
+# This exists because two already-fixed bugs came back on 4 Oct and nobody
+# found out for three days. Both would have failed here within a minute.
 
 name: tests
 
@@ -17,69 +18,31 @@ jobs:
   pytest:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: requirements/*.txt
+          # Needed because the file is Requirements.txt, and the action's
+          # default glob only looks for a lower-case requirements.txt. The
+          # runner is case-sensitive, so without this the cache step fails
+          # before anything installs.
+          cache-dependency-path: Requirements.txt
 
       - name: Install pinned dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements/dev.txt
+          pip install -r Requirements.txt
 
       - name: Check every module imports
-        # A broken import can hide behind a module no test happens to load.
-        # injection_classifier is included on purpose: it must import without
-        # torch installed, which is the state this runner is in.
+        # A chained assignment or a stale copy breaks the import without
+        # breaking the syntax, so py_compile and parse-only linters miss it.
+        # This catches it before pytest even collects.
         run: |
-          for m in registry signing ingest sanitizer capability_gate gated_turn grounding injection_classifier nli facts attack_suite config freshness; do
-            PYTHONPATH=src python -c "import provenance_gated_rag.$m" || exit 1
-          done
+          python -c "import pgrag.core.registry"
+          python -c "import pgrag.cli"
+          python -c "import pgrag.adapters.llamaindex"
 
       - name: Run the test suite
-        # The sentence splitter needs NLTK's stopwords and punkt_tab. NLTK
-        # refuses to download into llama_index's bundled cache on this runner
-        # (the toolcache is group-writable), so give it a private folder.
-        run: |
-          export NLTK_DATA="$HOME/nltk_data"
-          mkdir -m 700 -p "$NLTK_DATA"
-          python -m nltk.downloader -d "$NLTK_DATA" stopwords punkt_tab
-          pytest -q
-
-  # pip install provenance-gated-rag has to give a working library on its own:
-  # built from pyproject.toml, installed into a fresh venv outside the
-  # checkout (so nothing can be imported from the repo by accident), and used
-  # from an empty folder with no Ollama and none of the repository's data.
-  package:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-
-      - name: Build the wheel and source archive
-        run: |
-          python -m pip install --upgrade pip build
-          python -m build --outdir dist
-
-      - name: Install the wheel into a fresh venv and use it from an empty folder
-        run: |
-          python -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install dist/*.whl
-          mkdir "$RUNNER_TEMP/user-project"
-          cp scripts/package_smoke.py "$RUNNER_TEMP/"
-          cd "$RUNNER_TEMP/user-project"
-          export NLTK_DATA="$HOME/nltk_data"
-          mkdir -m 700 -p "$NLTK_DATA"
-          "$RUNNER_TEMP/venv/bin/python" -m nltk.downloader -d "$NLTK_DATA" stopwords punkt_tab
-          "$RUNNER_TEMP/venv/bin/python" "$RUNNER_TEMP/package_smoke.py"
-
-      - name: The archive holds the library, not the repository
-        run: |
-          ! unzip -l dist/*.whl | grep -E "(^| )(tests|data|results|scripts)/"
-
+        run: pytest -q

@@ -1,14 +1,18 @@
+data/
+
+# Compiled bytecode. Three .pyc files are currently tracked, which makes
+# `git pull` fail for anyone who has run the tests -- their freshly generated
+# copies collide with the committed ones. Untrack them with:
+#   git rm -r --cached pgrag/__pycache__ pgrag/core/__pycache__
 __pycache__/
-*.pyc
+*.py[cod]
+
 .venv/
-.env
-.pytest_cache/
-.ruff_cache/
-*.egg-info/
-.DS_Store
-data/decisions/
-.coverage
-htmlcov/
 storage/
+decisions/
+results/
+trust.yaml
+
 .idea/
-dist/
+.vscode/
+.DS_Store
