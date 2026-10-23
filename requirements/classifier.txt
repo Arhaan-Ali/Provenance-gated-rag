@@ -1,0 +1,8 @@
+# Optional second stage of the sanitizer: a local prompt-injection classifier
+# (provenance_gated_rag/injection_classifier.py). Pinned to the versions the
+# fork runs, so both repositories score text with the same stack. Without
+# these installed, screening uses the pattern checks alone.
+-r base.txt
+
+transformers==5.18.0
+torch==2.14.1

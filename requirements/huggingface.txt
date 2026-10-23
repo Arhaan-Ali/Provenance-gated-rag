@@ -1,0 +1,8 @@
+# Optional. Only needed with EMBEDDING_PROVIDER=huggingface, which exists so
+# the retrieval scores measured before the switch to Ollama embeddings can
+# still be reproduced. Pulls torch and transformers -- several GB -- which is
+# why it is not in base.txt.
+
+-r base.txt
+
+llama-index-embeddings-huggingface==0.8.0

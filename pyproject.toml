@@ -1,0 +1,64 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "provenance-gated-rag"
+dynamic = ["version"]
+description = "A RAG layer that tracks where every chunk came from, and limits what an answer may say and a model may do when untrusted content is in context."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Piyush Pandey" }]
+keywords = ["rag", "llamaindex", "prompt-injection", "provenance", "llm-security"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+    "Topic :: Security",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+# Compatible ranges, not exact pins: a library pinned exactly cannot be
+# installed next to anything that needs a neighbouring version. The exact
+# set the published numbers were measured with is requirements/lock.txt.
+# llama-index-core is held to one minor series because it ships breaking
+# changes between them.
+dependencies = [
+    "llama-index-core>=0.14.25,<0.15",
+    "llama-index-embeddings-ollama>=0.10,<0.11",
+    "llama-index-llms-ollama>=0.11,<0.12",
+    "llama-index-readers-file>=0.7,<0.8",
+    "pypdf>=6.19,<7",
+    "python-dotenv>=1.2,<2",
+    "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+# The entailment model for M5's meaning check, and the sanitizer's
+# classifier: the same stack, so either extra gives both.
+nli = ["transformers>=5.18,<6", "torch>=2.14,<3"]
+classifier = ["transformers>=5.18,<6", "torch>=2.14,<3"]
+huggingface = ["llama-index-embeddings-huggingface>=0.8,<0.9"]
+dev = [
+    "pytest>=9.1,<10",
+    "pytest-cov>=7.1,<8",
+    "pytest-timeout>=2.5,<3",
+    "ruff>=0.16,<0.17",
+    "reportlab>=5.0,<6",
+]
+
+[project.urls]
+Repository = "https://github.com/piyush2676/provenance-gated-rag"
+Reproducing = "https://github.com/piyush2676/provenance-gated-rag/blob/main/docs/REPRODUCING.md"
+
+[tool.hatch.version]
+path = "src/provenance_gated_rag/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/provenance_gated_rag"]
+
+# The source archive is the library, not the repository: the demo corpora,
+# results and red-team data stay on GitHub.
+[tool.hatch.build.targets.sdist]
+include = ["src/provenance_gated_rag", "README.md", "pyproject.toml", "LICENSE"]

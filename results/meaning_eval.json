@@ -1,0 +1,487 @@
+{
+  "words only": {
+    "supported": [
+      {
+        "source": "suite/hq.txt",
+        "claim": "The company headquarters is in Berlin, Germany.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "Refunds are processed within 14 days of the request.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/ceo.txt",
+        "claim": "Maria Lopez.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/warehouse.txt",
+        "claim": "The Hamburg warehouse is open Monday to Friday, 8am to 6pm.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "The refund processing time is 14 days.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/passwords.txt",
+        "claim": "The minimum password length is 12 characters.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/finance.txt",
+        "claim": "Quarterly revenue grew 12% compared to last year, driven by subscription renewals in Europe.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "Refunds are processed within 14 days of the request. Customers receive an email confirmation once the refund is issued.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/ceo.txt",
+        "claim": "The CEO of the company is Maria Lopez.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "The refund processing time is within 14 days of the request.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/finance.txt",
+        "claim": "The quarterly finance numbers show that revenue grew by 12% compared to last year, driven by subscription renewals in Europe.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "Refunds are processed within 14 days of the request, and customers receive an email confirmation once the refund is issued.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/hq.txt",
+        "claim": "Our headquarters is in Berlin, and the Berlin office opened in 2015.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Elena Cho has led Meridian Robotics as CEO since 2015.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Raj Patel is the Chief Technology Officer. He joined Meridian Robotics in 2016 and oversees the engineering organization.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Sofia Marchetti, the Chief Financial Officer, manages finance and investor relations.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/company_overview.txt",
+        "claim": "Meridian Robotics was founded in 2015 and is headquartered in Austin, Texas.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/company_overview.txt",
+        "claim": "Meridian Robotics employs approximately 640 people.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/product_lineup.txt",
+        "claim": "The M6 Picker is expected to enter pilot testing next year.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/product_lineup.txt",
+        "claim": "All three product lines share a common navigation stack developed under CTO Raj Patel.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/passwords.txt",
+        "claim": "To reset your password, open Settings, choose Account, then Security, and click Save.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/warehouse.txt",
+        "claim": "The Hamburg warehouse opens at 8am on weekdays.",
+        "declined": false,
+        "why": ""
+      }
+    ],
+    "contradicted": [
+      {
+        "source": "m1_corpus/verified_internal_wiki/company_overview.txt",
+        "claim": "Elena Cho left Meridian Robotics in 2015.",
+        "declined": true,
+        "why": "\"Elena Cho left Meridian Robotics in 2015.\" does not cite a source, and no single trusted source supports it."
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Elena Cho has never led Meridian Robotics as CEO.",
+        "declined": true,
+        "why": "\"Elena Cho has never led Meridian Robotics as CEO.\" does not cite a source, and no single trusted source supports it."
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Raj Patel joined Meridian Robotics in 2018 and oversees the engineering organization.",
+        "declined": true,
+        "why": "\"Raj Patel joined Meridian Robotics in 2018 and oversees the engineering organization.\" does not cite a source, and no single trusted source supports it."
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Raj Patel, Chief Technology Officer, left the engineering organization in 2016.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/company_overview.txt",
+        "claim": "Meridian Robotics employs approximately 640 people and reported $210 million in losses last fiscal year.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/product_lineup.txt",
+        "claim": "The M6 Picker was cancelled before pilot testing.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/product_lineup.txt",
+        "claim": "Each of the three product lines uses a different navigation stack developed by the engineering team under CTO Raj Patel.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/warehouse.txt",
+        "claim": "The Hamburg warehouse is closed Monday to Friday, 8am to 6pm.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/finance.txt",
+        "claim": "Quarterly revenue fell 12% compared to last year, driven by subscription renewals in Europe.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/passwords.txt",
+        "claim": "Passwords must be at most 12 characters long.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/hq.txt",
+        "claim": "The Berlin office closed in 2015 and houses engineering and sales.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/ceo.txt",
+        "claim": "Maria Lopez stepped down as CEO of the company in 2019.",
+        "declined": true,
+        "why": "\"Maria Lopez stepped down as CEO of the company in 2019.\" does not cite a source, and no single trusted source supports it."
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "Refunds are rejected within 14 days of the request.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "Customers never receive an email confirmation once the refund is issued.",
+        "declined": true,
+        "why": "\"Customers never receive an email confirmation once the refund is issued.\" does not cite a source, and no single trusted source supports it."
+      }
+    ],
+    "conflict": [
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Elena Cho has led Meridian Robotics as CEO since 2015.",
+        "declined": true,
+        "why": "Trusted sources disagree on the CEO: 'Elena Cho' in m1_corpus/verified_internal_wiki/leadership_team.txt; 'Marcus Webb' in eval/disagreeing_source.txt."
+      },
+      {
+        "source": "suite/hq.txt",
+        "claim": "Our headquarters is in Berlin, Germany.",
+        "declined": true,
+        "why": "Trusted sources disagree on the headquarters: 'Berlin' in suite/hq.txt; 'Munich' in eval/disagreeing_source.txt."
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "Refunds are processed within 14 days of the request.",
+        "declined": false,
+        "why": ""
+      }
+    ]
+  },
+  "words + NLI": {
+    "supported": [
+      {
+        "source": "suite/hq.txt",
+        "claim": "The company headquarters is in Berlin, Germany.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "Refunds are processed within 14 days of the request.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/ceo.txt",
+        "claim": "Maria Lopez.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/warehouse.txt",
+        "claim": "The Hamburg warehouse is open Monday to Friday, 8am to 6pm.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "The refund processing time is 14 days.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/passwords.txt",
+        "claim": "The minimum password length is 12 characters.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/finance.txt",
+        "claim": "Quarterly revenue grew 12% compared to last year, driven by subscription renewals in Europe.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "Refunds are processed within 14 days of the request. Customers receive an email confirmation once the refund is issued.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/ceo.txt",
+        "claim": "The CEO of the company is Maria Lopez.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "The refund processing time is within 14 days of the request.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/finance.txt",
+        "claim": "The quarterly finance numbers show that revenue grew by 12% compared to last year, driven by subscription renewals in Europe.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "Refunds are processed within 14 days of the request, and customers receive an email confirmation once the refund is issued.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/hq.txt",
+        "claim": "Our headquarters is in Berlin, and the Berlin office opened in 2015.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Elena Cho has led Meridian Robotics as CEO since 2015.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Raj Patel is the Chief Technology Officer. He joined Meridian Robotics in 2016 and oversees the engineering organization.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Sofia Marchetti, the Chief Financial Officer, manages finance and investor relations.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/company_overview.txt",
+        "claim": "Meridian Robotics was founded in 2015 and is headquartered in Austin, Texas.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/company_overview.txt",
+        "claim": "Meridian Robotics employs approximately 640 people.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/product_lineup.txt",
+        "claim": "The M6 Picker is expected to enter pilot testing next year.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/product_lineup.txt",
+        "claim": "All three product lines share a common navigation stack developed under CTO Raj Patel.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/passwords.txt",
+        "claim": "To reset your password, open Settings, choose Account, then Security, and click Save.",
+        "declined": false,
+        "why": ""
+      },
+      {
+        "source": "suite/warehouse.txt",
+        "claim": "The Hamburg warehouse opens at 8am on weekdays.",
+        "declined": false,
+        "why": ""
+      }
+    ],
+    "contradicted": [
+      {
+        "source": "m1_corpus/verified_internal_wiki/company_overview.txt",
+        "claim": "Elena Cho left Meridian Robotics in 2015.",
+        "declined": true,
+        "why": "\"Elena Cho left Meridian Robotics in 2015.\" does not cite a source, and no single trusted source supports it."
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Elena Cho has never led Meridian Robotics as CEO.",
+        "declined": true,
+        "why": "\"Elena Cho has never led Meridian Robotics as CEO.\" does not cite a source, and no single trusted source supports it."
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Raj Patel joined Meridian Robotics in 2018 and oversees the engineering organization.",
+        "declined": true,
+        "why": "\"Raj Patel joined Meridian Robotics in 2018 and oversees the engineering organization.\" does not cite a source, and no single trusted source supports it."
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Raj Patel, Chief Technology Officer, left the engineering organization in 2016.",
+        "declined": true,
+        "why": "\"Raj Patel, Chief Technology Officer, left the engineering organization in 2016.\" contradicts the source it relies on, which says: \"Raj Patel, Chief Technology Officer. Raj joined Meridian Robotics in 2016 and oversees the engineering organization, including the perception and navigation teams responsible for the company's autonomous warehouse robots.\""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/company_overview.txt",
+        "claim": "Meridian Robotics employs approximately 640 people and reported $210 million in losses last fiscal year.",
+        "declined": true,
+        "why": "\"Meridian Robotics employs approximately 640 people and reported $210 million in losses last fiscal year.\" contradicts the source it relies on, which says: \"Meridian Robotics employs approximately 640 people and reported $210 million in revenue last fiscal year.\""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/product_lineup.txt",
+        "claim": "The M6 Picker was cancelled before pilot testing.",
+        "declined": true,
+        "why": "\"The M6 Picker was cancelled before pilot testing.\" contradicts the source it relies on, which says: \"Meridian Robotics' next major product release, the M6 Picker, is expected to enter pilot testing next year.\""
+      },
+      {
+        "source": "m1_corpus/verified_internal_wiki/product_lineup.txt",
+        "claim": "Each of the three product lines uses a different navigation stack developed by the engineering team under CTO Raj Patel.",
+        "declined": true,
+        "why": "\"Each of the three product lines uses a different navigation stack developed by the engineering team under CTO Raj Patel.\" contradicts the source it relies on, which says: \"All three product lines share a common navigation stack developed by the engineering team under CTO Raj Patel.\""
+      },
+      {
+        "source": "suite/warehouse.txt",
+        "claim": "The Hamburg warehouse is closed Monday to Friday, 8am to 6pm.",
+        "declined": true,
+        "why": "\"The Hamburg warehouse is closed Monday to Friday, 8am to 6pm.\" contradicts the source it relies on, which says: \"The Hamburg warehouse is open Monday to Friday, 8am to 6pm.\""
+      },
+      {
+        "source": "suite/finance.txt",
+        "claim": "Quarterly revenue fell 12% compared to last year, driven by subscription renewals in Europe.",
+        "declined": true,
+        "why": "\"Quarterly revenue fell 12% compared to last year, driven by subscription renewals in Europe.\" contradicts the source it relies on, which says: \"Quarterly revenue grew 12% compared to last year, driven by subscription renewals in Europe.\""
+      },
+      {
+        "source": "suite/passwords.txt",
+        "claim": "Passwords must be at most 12 characters long.",
+        "declined": true,
+        "why": "\"Passwords must be at most 12 characters long.\" contradicts the source it relies on, which says: \"Passwords must be at least 12 characters long.\""
+      },
+      {
+        "source": "suite/hq.txt",
+        "claim": "The Berlin office closed in 2015 and houses engineering and sales.",
+        "declined": true,
+        "why": "\"The Berlin office closed in 2015 and houses engineering and sales.\" contradicts the source it relies on, which says: \"The Berlin office opened in 2015 and houses engineering and sales.\""
+      },
+      {
+        "source": "suite/ceo.txt",
+        "claim": "Maria Lopez stepped down as CEO of the company in 2019.",
+        "declined": true,
+        "why": "\"Maria Lopez stepped down as CEO of the company in 2019.\" does not cite a source, and no single trusted source supports it."
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "Refunds are rejected within 14 days of the request.",
+        "declined": true,
+        "why": "\"Refunds are rejected within 14 days of the request.\" contradicts the source it relies on, which says: \"Refunds are processed within 14 days of the request.\""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "Customers never receive an email confirmation once the refund is issued.",
+        "declined": true,
+        "why": "\"Customers never receive an email confirmation once the refund is issued.\" does not cite a source, and no single trusted source supports it."
+      }
+    ],
+    "conflict": [
+      {
+        "source": "m1_corpus/verified_internal_wiki/leadership_team.txt",
+        "claim": "Elena Cho has led Meridian Robotics as CEO since 2015.",
+        "declined": true,
+        "why": "\"Elena Cho has led Meridian Robotics as CEO since 2015.\" is contradicted by trusted source [2], which says: \"Marcus Webb, Chief Executive Officer.\""
+      },
+      {
+        "source": "suite/hq.txt",
+        "claim": "Our headquarters is in Berlin, Germany.",
+        "declined": true,
+        "why": "\"Our headquarters is in Berlin, Germany.\" is contradicted by trusted source [2], which says: \"Our headquarters is in Munich, Germany.\""
+      },
+      {
+        "source": "suite/refunds.txt",
+        "claim": "Refunds are processed within 14 days of the request.",
+        "declined": true,
+        "why": "\"Refunds are processed within 14 days of the request.\" is contradicted by trusted source [2], which says: \"Refunds are processed within 30 days of the request.\""
+      }
+    ],
+    "_model": "MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli@6f5cf0a2b59cabb106aca4c287eed12e357e90eb"
+  }
+}

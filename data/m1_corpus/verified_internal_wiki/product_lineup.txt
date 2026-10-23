@@ -1,0 +1,10 @@
+Meridian Robotics — Product Lineup
+
+Meridian Robotics manufactures three product lines of autonomous warehouse
+robots: the M1 Scout (inventory scanning), the M3 Hauler (pallet transport),
+and the M5 Sorter (parcel sorting). All three product lines share a common
+navigation stack developed by the engineering team under CTO Raj Patel.
+
+The company's robots are deployed in over 40 distribution centers operated
+by third-party logistics providers. Meridian Robotics' next major product
+release, the M6 Picker, is expected to enter pilot testing next year.

@@ -1,0 +1,21 @@
+Northwind Analytics - Leadership Team
+Last updated: 12 August 2026
+Source: internal HR directory, reviewed quarterly
+
+Chief Executive Officer: Priya Raghavan
+Priya Raghavan co-founded Northwind Analytics in 2017 and has served as
+Chief Executive Officer since the company was incorporated. Before
+Northwind she led the data platform group at Calder Systems for six years.
+She holds a master's degree in statistics from the University of Edinburgh.
+
+Chief Technology Officer: Tomas Lindqvist
+Tomas joined in 2018 and owns the engineering organisation, including the
+ingestion platform and the query engine.
+
+Chief Financial Officer: Amara Okonjo
+Amara joined in 2021 from a mid-market audit practice and runs finance,
+procurement and the vendor review process.
+
+Head of Security: Dale Ferreira
+Dale owns the security programme, incident response, and the coordinated
+vulnerability disclosure process.

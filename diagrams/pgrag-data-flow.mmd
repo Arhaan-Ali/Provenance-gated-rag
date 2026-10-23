@@ -1,0 +1,43 @@
+graph TD
+    SRC["Documents in source folders<br/>(wiki, inbox, downloads)"]
+    L1["1. Review gate<br/>a person approves each folder;<br/>every file fingerprinted"]
+    L2["2. Signed decisions<br/>HMAC chain, key outside project"]
+    L3["3. Ingestion screen<br/>patterns + optional classifier"]
+    L4["4. Labelling<br/>origin + trust tier on every chunk,<br/>hidden from the model"]
+    IDX[("Vector index")]
+    Q["User question"]
+    L5["5. Retrieval<br/>top matching chunks"]
+    L6["6. Query-time screen<br/>re-check what was retrieved"]
+    L7["7. Tool gate<br/>tools allowed by weakest tier;<br/>every call checked again"]
+    L8["8. Grounding (M5)<br/>every claim must be in<br/>a trusted source"]
+    OK["Answer with citations<br/>or allowed action"]
+    STOP["Declined / call refused<br/>WITH the reason shown"]
+
+    SRC --> L1
+    L1 -- "unapproved or changed file:<br/>re-review, never indexed" --> STOP
+    L1 --> L2
+    L2 -- "tampered: run stops" --> STOP
+    L2 --> L3
+    L3 -- "instructs the AI:<br/>text neutralised (silently)" --> L4
+    L3 --> L4
+    L4 --> IDX
+    Q --> L5
+    IDX --> L5
+    L5 --> L6
+    L6 --> L7
+    L6 --> L8
+    L7 -- "risky call from<br/>untrusted context" --> STOP
+    L8 -- "claim not in<br/>trusted source" --> STOP
+    L7 --> OK
+    L8 --> OK
+
+    classDef tells fill:#d9f2e3,stroke:#1e7a46,color:#0b3d22
+    classDef silent fill:#fff1cc,stroke:#b38600,color:#4d3a00
+    classDef plain fill:#eef1f5,stroke:#7a8594,color:#1f2933
+    classDef good fill:#dbeafe,stroke:#1d4ed8,color:#0b2a6b
+    classDef bad fill:#fde2e1,stroke:#b42318,color:#5c0f0a
+    class L1,L2,L7,L8 tells
+    class L3,L6 silent
+    class SRC,L4,IDX,Q,L5 plain
+    class OK good
+    class STOP bad

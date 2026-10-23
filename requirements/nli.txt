@@ -1,0 +1,5 @@
+# Optional entailment check for M5 (provenance_gated_rag/nli.py): reads
+# whether a source contradicts a claim, which the lexical checks cannot.
+# Same stack as the sanitizer's classifier, so one install serves both.
+# Without it, grounding checks answers by their words alone.
+-r classifier.txt

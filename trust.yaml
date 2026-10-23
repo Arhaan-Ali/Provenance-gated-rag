@@ -1,0 +1,21 @@
+# trust.yaml - which origin folder gets which trust tier.
+#
+# Tiers, highest trust to lowest:
+#   A  User authored         you wrote it yourself
+#   B  Internal documents    from an internal system, other people can edit it
+#   C  External verified     from outside, but signature / TLS / domain checked
+#   D  External un-verified  everything else
+#
+# Any origin NOT listed below is treated as D. Indentation: two spaces for
+# the name, four for its fields.
+#
+# editability - who can change this source?
+#   immutable | authenticated-few | org-wide | anonymous
+# org-wide caps the tier at C, anonymous at D. Not declared is treated as
+# anonymous: silence is not evidence that few people can edit it.
+
+origins:
+  verified_internal_wiki:
+    tier: B
+    reason: "Internal wiki content; editable by staff, not externally verified"
+    editability: org-wide
