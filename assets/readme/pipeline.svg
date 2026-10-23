@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="930" viewBox="0 0 1200 930" role="img" aria-labelledby="title desc">
+  <title id="title">PGRAG provenance and capability-gating pipeline</title>
+  <desc id="desc">Five stages: review origins and file hashes; screen whole documents before chunking; stamp and re-stamp provenance; retrieve and screen the chunks; gate tools using the weakest tier and check each call again.</desc>
+  <rect width="1200" height="930" rx="12" fill="#0b0c0b"/>
+  <text x="52" y="54" fill="#e6b93f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" font-weight="700">THE CONTROL FLOW</text>
+  <text x="52" y="112" fill="#f4f1e8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="48" font-weight="700">Two boundaries. One provenance chain.</text>
+  <path d="M52 140H1148" stroke="#35362f" stroke-width="1"/>
+
+  <text x="52" y="176" fill="#9a998f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" font-weight="700">01 — INGEST / BEFORE CHUNKING</text>
+
+  <g transform="translate(52 196)">
+    <rect width="1096" height="104" rx="5" fill="#141512" stroke="#55564e" stroke-width="1.5"/>
+    <rect width="8" height="104" fill="#e6b93f"/>
+    <text x="32" y="65" fill="#e6b93f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="48" font-weight="800">01</text>
+    <text x="132" y="54" fill="#f4f1e8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="50" font-weight="700">Review origins + file hashes</text>
+    <text x="132" y="84" fill="#b5b3a9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="34">Human-confirmed tier; changes trigger review</text>
+  </g>
+  <path d="M600 300V316" stroke="#e6b93f" stroke-width="2"/>
+  <path d="M592 308L600 316L608 308" fill="none" stroke="#e6b93f" stroke-width="2"/>
+
+  <g transform="translate(52 322)">
+    <rect width="1096" height="104" rx="5" fill="#141512" stroke="#55564e" stroke-width="1.5"/>
+    <rect width="8" height="104" fill="#e6b93f"/>
+    <text x="32" y="65" fill="#e6b93f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="48" font-weight="800">02</text>
+    <text x="132" y="54" fill="#f4f1e8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="50" font-weight="700">Screen whole documents</text>
+    <text x="132" y="84" fill="#b5b3a9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="34">Patterns, then optional classifier; drop flagged docs</text>
+  </g>
+  <path d="M600 426V442" stroke="#e6b93f" stroke-width="2"/>
+  <path d="M592 434L600 442L608 434" fill="none" stroke="#e6b93f" stroke-width="2"/>
+
+  <g transform="translate(52 448)">
+    <rect width="1096" height="104" rx="5" fill="#141512" stroke="#55564e" stroke-width="1.5"/>
+    <rect width="8" height="104" fill="#e6b93f"/>
+    <text x="32" y="65" fill="#e6b93f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="48" font-weight="800">03</text>
+    <text x="132" y="54" fill="#f4f1e8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="50" font-weight="700">Stamp, transform, re-stamp</text>
+    <text x="132" y="84" fill="#b5b3a9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="34">Keep provenance structural through indexing</text>
+  </g>
+
+  <path d="M52 580H1148" stroke="#35362f" stroke-width="1"/>
+  <text x="52" y="615" fill="#9a998f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="22" font-weight="700">02 — QUERY / BEFORE EACH TURN</text>
+
+  <g transform="translate(52 634)">
+    <rect width="1096" height="104" rx="5" fill="#141512" stroke="#55564e" stroke-width="1.5"/>
+    <rect width="8" height="104" fill="#78a9f5"/>
+    <text x="32" y="65" fill="#78a9f5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="48" font-weight="800">04</text>
+    <text x="132" y="54" fill="#f4f1e8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="50" font-weight="700">Retrieve + screen chunks</text>
+    <text x="132" y="84" fill="#b5b3a9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="34">Quarantine flagged context before the LLM reads it</text>
+  </g>
+  <path d="M600 738V754" stroke="#e6b93f" stroke-width="2"/>
+  <path d="M592 746L600 754L608 746" fill="none" stroke="#e6b93f" stroke-width="2"/>
+
+  <g transform="translate(52 760)">
+    <rect width="1096" height="104" rx="5" fill="#171512" stroke="#e6b93f" stroke-width="1.5"/>
+    <rect width="8" height="104" fill="#e6b93f"/>
+    <text x="32" y="65" fill="#e6b93f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="48" font-weight="800">05</text>
+    <text x="132" y="54" fill="#f4f1e8" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="50" font-weight="700">Gate tools by weakest tier</text>
+    <text x="132" y="84" fill="#b5b3a9" font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif" font-size="34">Offer allowed tools; check every call again</text>
+  </g>
+
+  <text x="52" y="904" fill="#9a998f" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="20">UNKNOWN OR UNTRACEABLE PROVENANCE FAILS CLOSED TO D</text>
+</svg>
